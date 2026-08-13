@@ -121,12 +121,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { error: error.message };
+    await revokeOtherSessions();
     return { error: null };
   }
 
+  // Only one active login per account: revoke every other session's refresh
+  // token right after a fresh sign-in, so logging in on a new device/browser
+  // signs the account out everywhere else. Best-effort — never blocks login.
+  async function revokeOtherSessions() {
+    try {
+      await supabase.auth.signOut({ scope: 'others' });
+    } catch (err) {
+      console.error('Failed to revoke other sessions:', err);
+    }
+  }
+
   async function signOut() {
-    await supabase.auth.signOut();
-    setProfile(null);
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Sign out request failed:', err);
+    } finally {
+      // Clear local state immediately rather than waiting on onAuthStateChange
+      // — if that event is ever delayed or dropped, the button should still
+      // visibly log the user out instead of appearing to do nothing.
+      setSession(null);
+      setUser(null);
+      setProfile(null);
+    }
   }
 
   async function refreshProfile() {
@@ -170,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function verifyEmailOtp(email: string, token: string) {
     const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
     if (error) return { error: error.message };
+    await revokeOtherSessions();
     return { error: null };
   }
 
