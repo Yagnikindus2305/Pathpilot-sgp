@@ -1,3 +1,5 @@
+import companiesData from '@/data/pathpilot_companies.json';
+
 export interface GroupedOptions {
   [category: string]: string[];
 }
@@ -68,8 +70,94 @@ export function fetchToolCheck(role: string, resumeText: string) {
   return postJson<{ role: string; tools: ToolCheckItem[] }>('/tool-check', { role, resumeText });
 }
 
+interface CompanyRecord {
+  name: string;
+  category: string;
+  tier: string;
+  salaryBand: string;
+  roles: { role: string; skills: string[] }[];
+}
+
+const companyList = (companiesData as { companies: CompanyRecord[] }).companies;
+
+// Mirrors server/routes/data.js's inferCompanyCategories — kept in sync by hand
+// since this is a client-side fallback for when /api/data/company-match is
+// unreachable (e.g. a static-only deploy with no port-4000 server running).
+function inferCompanyCategories(roleTitle: string): string[] {
+  const t = (roleTitle || '').toLowerCase();
+  const has = (...words: string[]) => words.some((w) => t.includes(w));
+  const categories: string[] = [];
+
+  if (has('security', 'vapt', 'penetration', 'soc analyst', 'cyber', 'threat')) categories.push('Cybersecurity');
+  if (has('data analyst', 'data scientist', 'data engineer', 'machine learning', 'ml engineer', 'ai engineer', 'business intelligence', 'analytics', 'statistician')) categories.push('Analytics / Data');
+  if (has('embedded', 'hardware', 'semiconductor', 'vlsi', 'chip')) categories.push('Semiconductor / Deep Tech');
+  if (has('mechanical', 'civil engineer', 'electrical engineer', 'chemical engineer', 'biomedical', 'architect')) categories.push('Core Engineering');
+  if (has('consult')) categories.push('Consulting / GCC');
+
+  if (!categories.length) categories.push('Indian IT Services', 'Global Product / MNC', 'Indian Product / Startup');
+  return categories;
+}
+
+function salaryFloor(salaryBand: string): number {
+  const match = /([\d.]+)/.exec(salaryBand || '');
+  return match ? parseFloat(match[1]) : Infinity;
+}
+
+function matchRole(skills: string[], roleSkills: string[], userSkills: string[]) {
+  const have = roleSkills.filter((s) => userSkills.includes(s.toLowerCase()));
+  const missing = roleSkills.filter((s) => !userSkills.includes(s.toLowerCase()));
+  return { have, missing, matchPct: Math.round((have.length / roleSkills.length) * 100) };
+}
+
+function getCompanyMatches(skills: string[], role?: string): CompanyMatch[] {
+  const userSkills = (skills || []).map((s) => s.toLowerCase());
+  const relevantCategories = inferCompanyCategories(role || '');
+
+  const results: CompanyMatch[] = [];
+  for (const c of companyList) {
+    if (!relevantCategories.includes(c.category)) continue;
+    const roleMatches: CompanyRoleMatch[] = [];
+    for (const r of c.roles || []) {
+      const { have, missing, matchPct } = matchRole(userSkills, r.skills, userSkills);
+      if (have.length) roleMatches.push({ role: r.role, have, missing, matchPct });
+    }
+    if (roleMatches.length) {
+      roleMatches.sort((a, b) => b.matchPct - a.matchPct);
+      results.push({ company: c.name, category: c.category, tier: c.tier, salaryBand: c.salaryBand, bestMatch: roleMatches[0], allRoles: roleMatches });
+    }
+  }
+  results.sort((a, b) => b.bestMatch.matchPct - a.bestMatch.matchPct);
+  if (results.length > 18) results.length = 18;
+
+  const hasMassRecruiter = results.some((r) => r.tier === 'Mass recruiter');
+  if (!hasMassRecruiter) {
+    const pool = companyList.filter((c) => relevantCategories.includes(c.category) && c.tier === 'Mass recruiter');
+    const fallbackCompany = [...pool].sort((a, b) => salaryFloor(a.salaryBand) - salaryFloor(b.salaryBand))[0];
+    if (fallbackCompany && !results.some((r) => r.company === fallbackCompany.name)) {
+      const role0 = fallbackCompany.roles[0];
+      const { have, missing, matchPct } = matchRole(userSkills, role0.skills, userSkills);
+      const match = { role: role0.role, have, missing, matchPct };
+      results.push({ company: fallbackCompany.name, category: fallbackCompany.category, tier: fallbackCompany.tier, salaryBand: fallbackCompany.salaryBand, bestMatch: match, allRoles: [match] });
+    }
+  }
+
+  results.push({
+    company: 'Entry-Level / Walk-in & Campus Drives',
+    category: 'Entry-Level',
+    tier: 'Mass recruiter',
+    salaryBand: '1-2 LPA',
+    bestMatch: { role: 'Trainee / Associate', have: [], missing: ['Communication', 'MS Office', 'Basic Computer Skills'], matchPct: 40 },
+    allRoles: [{ role: 'Trainee / Associate', have: [], missing: ['Communication', 'MS Office', 'Basic Computer Skills'], matchPct: 40 }],
+  });
+
+  return results.slice(0, 20);
+}
+
+// Falls back to a local, bundled recomputation (identical logic to the server
+// route) when /api/data/company-match is unreachable — the one static-deploy
+// gap that didn't already have a client-side fallback like colleges/roles/roadmap do.
 export function fetchCompanyMatch(skills: string[], role?: string) {
-  return postJson<{ companies: CompanyMatch[] }>('/company-match', { skills, role });
+  return postJson<{ companies: CompanyMatch[] }>('/company-match', { skills, role }).catch(() => ({ companies: getCompanyMatches(skills, role) }));
 }
 
 // Fetches matches per role (same-domain roles a student selected) and merges
