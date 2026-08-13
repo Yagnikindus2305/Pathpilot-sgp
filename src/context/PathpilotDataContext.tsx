@@ -1,8 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { fetchColleges, fetchCourses, fetchRoles, type GroupedOptions } from '@/lib/api';
-import { getCollegeOptionsGrouped, getRoleOptionsGrouped } from '@/lib/pathpilot';
-
-const FALLBACK_YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year', 'Passed Out'];
+import { getCollegeOptionsGrouped, getRoleOptionsGrouped, getCourseOptionsGrouped, getCourseYears } from '@/lib/pathpilot';
 
 interface PathpilotDataValue {
   collegeGroups: GroupedOptions;
@@ -17,8 +15,8 @@ const PathpilotDataContext = createContext<PathpilotDataValue | undefined>(undef
 export function PathpilotDataProvider({ children }: { children: ReactNode }) {
   const [collegeGroups, setCollegeGroups] = useState<GroupedOptions>(() => getCollegeOptionsGrouped());
   const [roleGroups, setRoleGroups] = useState<GroupedOptions>(() => getRoleOptionsGrouped());
-  const [courseGroups, setCourseGroups] = useState<GroupedOptions>({});
-  const [courseYears, setCourseYears] = useState<string[]>(FALLBACK_YEARS);
+  const [courseGroups, setCourseGroups] = useState<GroupedOptions>(() => getCourseOptionsGrouped());
+  const [courseYears, setCourseYears] = useState<string[]>(() => getCourseYears());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

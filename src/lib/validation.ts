@@ -10,21 +10,27 @@ function looksFake(digits: string): boolean {
   return ASCENDING_DIGIT_CYCLE.includes(digits) || DESCENDING_DIGIT_CYCLE.includes(digits);
 }
 
+// Strips everything but digits and caps at 10, so a phone <input>'s onChange
+// can enforce "10 digits, not more" as the user types rather than only at submit.
+export function sanitizePhoneInput(raw: string): string {
+  return raw.replace(/\D/g, '').slice(0, 10);
+}
+
 export function isValidPhone(raw: string): boolean {
-  const trimmed = raw.trim();
-  const digits = trimmed.replace(/\D/g, '');
+  const digits = raw.replace(/\D/g, '');
   if (looksFake(digits)) return false;
-  if (trimmed.startsWith('+')) return digits.length >= 10 && digits.length <= 15;
   return /^[6-9]\d{9}$/.test(digits);
 }
 
-export const PHONE_HELP_TEXT = '10-digit Indian mobile number (not a placeholder like 9999999999), or include a country code (e.g. +1 555 123 4567)';
+export const PHONE_HELP_TEXT = 'Exactly 10 digits, a real Indian mobile number (not a placeholder like 9999999999)';
 
 // Stricter than the browser's native type="email" check (which happily accepts
 // things like "a@b" with no real TLD) — this is a format check only, not a
-// deliverability check. It exists to stop obviously-malformed input from
+// deliverability check (proving an inbox is real needs an actual verification
+// email, which Supabase's signup confirmation already handles). It exists to
+// stop obviously-malformed input, including a fake single-letter TLD, from
 // triggering an actual signup/OTP email send before Supabase even gets asked.
-const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
 export function isValidEmail(raw: string): boolean {
   const trimmed = raw.trim();

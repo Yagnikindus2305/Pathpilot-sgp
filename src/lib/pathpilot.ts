@@ -1,6 +1,7 @@
 import collegesData from '@/data/pathpilot_colleges.json';
 import rolesData from '@/data/pathpilot_all_job_titles.json';
 import richRolesData from '@/data/pathpilot_roles_rich.json';
+import coursesData from '@/data/pathpilot_courses.json';
 import { ROLE_SKILLS } from '@/lib/roleSkills';
 
 export interface PathpilotRoadmapItem {
@@ -31,6 +32,7 @@ export interface GroupedOptions {
 const collegeList = (collegesData as { colleges: PathpilotCollege[] }).colleges;
 const roleList = (rolesData as { roles: { title: string; category: string }[] }).roles;
 const richRoleList = (richRolesData as { roles: PathpilotRole[] }).roles;
+const courseData = coursesData as { courses: { name: string; category: string }[]; yearsOfStudy: string[] };
 
 export function getCollegeOptionsGrouped(): GroupedOptions {
   return collegeList.reduce<GroupedOptions>((acc, college) => {
@@ -38,6 +40,18 @@ export function getCollegeOptionsGrouped(): GroupedOptions {
     acc[college.category].push(college.name);
     return acc;
   }, {});
+}
+
+export function getCourseOptionsGrouped(): GroupedOptions {
+  return courseData.courses.reduce<GroupedOptions>((acc, course) => {
+    if (!acc[course.category]) acc[course.category] = [];
+    acc[course.category].push(course.name);
+    return acc;
+  }, {});
+}
+
+export function getCourseYears(): string[] {
+  return courseData.yearsOfStudy;
 }
 
 export function getRoleOptionsGrouped(): GroupedOptions {
