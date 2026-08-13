@@ -60,11 +60,11 @@ nav { display: grid; gap: 5px; }
 /* auth */
 .auth-page { min-height: 100vh; display: grid; grid-template-columns: 43% 57%; background: var(--surface); }.auth-visual { position: relative; overflow: hidden; padding: 42px 8%; background: #1e2761; color: #fff; display: flex; flex-direction: column; justify-content: space-evenly; }.brand-light { color: #fff; padding: 0; }.brand-light .brand-word span { color: #aebcff; }.brand-light .brand-tagline { color: #9faade; }.visual-copy { max-width: 420px; position: relative; z-index: 1; }.visual-copy h1 { font: 800 60px/1.12 Manrope; letter-spacing: -.065em; margin: 18px 0; }.visual-copy h1 em { color: #aebcff; font-style: normal; }.visual-copy p { color: #c1caed; max-width: 380px; font-size: 16px; line-height: 1.7; }.pulse-dot { width: 7px; height: 7px; background: #79e4b0; border-radius: 50%; box-shadow: 0 0 0 5px #79e4b01e; }.visual-stats { display: flex; gap: 42px; position: relative; z-index: 1; }.visual-stats div { display: grid; gap: 3px; }.visual-stats strong { font: 700 24px Manrope; }.visual-stats span { color: #9faade; font-size: 11px; }.visual-about { position: relative; z-index: 1; margin-top: 10px; }
 .visual-about p { color: #c1caed; max-width: 400px; font-size: 14.5px; line-height: 1.7; margin: 0 0 18px; }
-.founders-row { display: flex; flex-wrap: wrap; gap: 24px; }
-.founder-avatar { display: flex; flex-direction: column; align-items: center; gap: 11px; }
-.founder-photo { width: 190px; height: 190px; border-radius: 50%; background: #36438b; border: 3px solid #4d5aa8; display: grid; place-items: center; color: #dbe1ff; font: 700 40px Manrope, sans-serif; overflow: hidden; }
+.founders-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.founder-avatar { display: flex; flex-direction: column; align-items: center; gap: 11px; min-width: 0; }
+.founder-photo { width: 100%; max-width: 190px; aspect-ratio: 1; border-radius: 50%; background: #36438b; border: 3px solid #4d5aa8; display: grid; place-items: center; color: #dbe1ff; font: 700 40px Manrope, sans-serif; overflow: hidden; }
 .founder-photo img { width: 100%; height: 100%; object-fit: cover; }
-.founder-avatar small { color: #e3e8fc; font-size: 15px; font-weight: 700; text-align: center; white-space: nowrap; }
+.founder-avatar small { color: #e3e8fc; font-size: 15px; font-weight: 700; text-align: center; }
 .founder-linkedin { display: inline-flex; align-items: center; gap: 5px; color: #9faade; font-size: 13px; font-weight: 600; text-decoration: none; }
 .founder-linkedin:hover { color: #c1caed; text-decoration: underline; }
 .orbit { position: absolute; border: 1px solid #ffffff14; border-radius: 50%; }.orbit-one { width: 570px; height: 570px; right: -280px; top: 15%; }.orbit-two { width: 380px; height: 380px; right: -185px; top: 25%; }.auth-form-wrap { position: relative; display: grid; place-items: center; padding: 50px; }
