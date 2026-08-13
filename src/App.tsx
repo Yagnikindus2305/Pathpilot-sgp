@@ -956,7 +956,7 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
 }
 
 const questions = QUESTIONS;
-const TEST_QUESTION_COUNT = 12;
+const TEST_QUESTION_COUNT = 20;
 const TEST_DURATION_SECONDS = 15 * 60;
 
 function shuffle<T>(arr: T[]): T[] {
