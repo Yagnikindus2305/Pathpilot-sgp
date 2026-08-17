@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import type { Profile } from '@/lib/types';
@@ -41,6 +41,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [passwordRecovery, setPasswordRecovery] = useState(false);
+  // Random per-tab id so this tab can tell "another device signed in and
+  // revoked me" apart from "this is the broadcast I just sent myself".
+  const deviceId = useRef(crypto.randomUUID()).current;
 
   async function loadProfile(authUser: User) {
     const { data, error } = await supabase
@@ -103,6 +106,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  // Listens for the "you've been signed in elsewhere" broadcast (sent by
+  // revokeOtherSessions below) so this tab signs out the instant a new device
+  // logs in, rather than staying usable until its access token happens to
+  // expire and its already-revoked refresh token fails — revoking the refresh
+  // token is what actually enforces one active device; this just makes an
+  // already-open other tab notice immediately instead of up to ~an hour later.
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase.channel(`user-session-${user.id}`);
+    channel
+      .on('broadcast', { event: 'force-logout' }, ({ payload }) => {
+        if (payload?.exceptDeviceId === deviceId) return;
+        window.alert('You were signed out because this account was signed in on another device.');
+        signOut();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   async function signUp(email: string, password: string, fullName: string, phone: string) {
     // Metadata passed here lands in auth.users.raw_user_meta_data regardless of
     // whether email confirmation is on (i.e. even with no session yet). The
@@ -131,6 +154,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function revokeOtherSessions() {
     try {
       await supabase.auth.signOut({ scope: 'others' });
+      const { data: { user: current } } = await supabase.auth.getUser();
+      if (!current) return;
+      // Nudges any other tab/device that's still open right now to sign out
+      // immediately instead of waiting for its access token to expire.
+      const channel = supabase.channel(`user-session-${current.id}`);
+      channel.subscribe((status) => {
+        if (status !== 'SUBSCRIBED') return;
+        channel.send({ type: 'broadcast', event: 'force-logout', payload: { exceptDeviceId: deviceId } })
+          .finally(() => supabase.removeChannel(channel));
+      });
     } catch (err) {
       console.error('Failed to revoke other sessions:', err);
     }
