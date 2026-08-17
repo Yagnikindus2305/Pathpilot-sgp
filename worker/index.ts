@@ -250,7 +250,7 @@ async function inferRole(request: Request, env: Env): Promise<Response> {
     // Cloudflare Workers AI — free tier (10,000 requests/day on the account's
     // free allocation), no separate API key/billing needed since it runs on
     // the same Cloudflare account as this Worker.
-    const WORKERS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+    const WORKERS_AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
     const aiResult = await ai.run(WORKERS_AI_MODEL, {
       messages: [
         { role: 'system', content: AI_ROLE_SYSTEM_PROMPT },
