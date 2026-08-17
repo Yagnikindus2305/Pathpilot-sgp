@@ -1,4 +1,5 @@
 import companiesData from '@/data/pathpilot_companies.json';
+import { supabase } from '@/lib/supabase';
 
 export interface GroupedOptions {
   [category: string]: string[];
@@ -189,17 +190,53 @@ export interface InternshipMatch {
 // Internship stipends aren't in the source data (it's a full-time hiring
 // dataset) — derived from each company's existing tier instead of a separate
 // 90-company dataset, so this stays consistent with "Companies you can
-// target" rather than drifting out of sync. ₹6,000-8,000/month is the
-// baseline floor for the most accessible tier, scaling up from there.
-function stipendBandForTier(tier: string): string {
-  const t = tier.toLowerCase();
-  if (t.includes('dream')) return '₹25,000–50,000/month';
-  if (t.includes('tier-1')) return '₹15,000–25,000/month';
-  if (t.includes('mid')) return '₹8,000–15,000/month';
-  return '₹6,000–8,000/month';
+// target" rather than drifting out of sync.
+interface StipendRange { min: number; max: number }
+
+// Matches the seed rows in supabase/migrations/20260817060000_internship_stipend_tiers.sql —
+// used only if that table is empty or unreachable, so internships never break.
+const FALLBACK_STIPEND_TIERS: Record<string, StipendRange> = {
+  mass_recruiter: { min: 6000, max: 8000 },
+  mid_tier: { min: 8000, max: 15000 },
+  tier_1: { min: 15000, max: 25000 },
+  dream: { min: 25000, max: 50000 },
+};
+
+let stipendTiersCache: Record<string, StipendRange> | null = null;
+
+// Cached for the lifetime of the page load — these ranges are edited rarely
+// (via Supabase's table editor, not the app), so there's no need to refetch
+// on every internship-match call.
+async function loadStipendTiers(): Promise<Record<string, StipendRange>> {
+  if (stipendTiersCache) return stipendTiersCache;
+  try {
+    const { data, error } = await supabase.from('stipend_tiers').select('tier_key, min_stipend, max_stipend');
+    if (error || !data || !data.length) throw error || new Error('empty');
+    const map: Record<string, StipendRange> = {};
+    for (const row of data as { tier_key: string; min_stipend: number; max_stipend: number }[]) {
+      map[row.tier_key] = { min: row.min_stipend, max: row.max_stipend };
+    }
+    stipendTiersCache = { ...FALLBACK_STIPEND_TIERS, ...map };
+  } catch {
+    stipendTiersCache = FALLBACK_STIPEND_TIERS;
+  }
+  return stipendTiersCache;
 }
 
-export function getInternshipMatches(skills: string[], role?: string): InternshipMatch[] {
+function tierKeyFor(tier: string): string {
+  const t = tier.toLowerCase();
+  if (t.includes('dream')) return 'dream';
+  if (t.includes('tier-1')) return 'tier_1';
+  if (t.includes('mid')) return 'mid_tier';
+  return 'mass_recruiter';
+}
+
+function formatStipendBand(range: StipendRange): string {
+  return `₹${range.min.toLocaleString('en-IN')}–${range.max.toLocaleString('en-IN')}/month`;
+}
+
+export async function getInternshipMatches(skills: string[], role?: string): Promise<InternshipMatch[]> {
+  const tiers = await loadStipendTiers();
   const userSkills = (skills || []).map((s) => s.toLowerCase());
   const relevantCategories = inferCompanyCategories(role || '');
 
@@ -213,7 +250,8 @@ export function getInternshipMatches(skills: string[], role?: string): Internshi
     }
     if (roleMatches.length) {
       roleMatches.sort((a, b) => b.matchPct - a.matchPct);
-      results.push({ company: c.name, category: c.category, tier: c.tier, stipendBand: stipendBandForTier(c.tier), bestMatch: roleMatches[0], allRoles: roleMatches });
+      const band = formatStipendBand(tiers[tierKeyFor(c.tier)] || FALLBACK_STIPEND_TIERS.mass_recruiter);
+      results.push({ company: c.name, category: c.category, tier: c.tier, stipendBand: band, bestMatch: roleMatches[0], allRoles: roleMatches });
     }
   }
   results.sort((a, b) => b.bestMatch.matchPct - a.bestMatch.matchPct);
@@ -225,7 +263,7 @@ export function getInternshipMatches(skills: string[], role?: string): Internshi
     company: 'Campus / Walk-in Internship Drives',
     category: 'Entry-Level',
     tier: 'Mass recruiter',
-    stipendBand: '₹6,000–8,000/month',
+    stipendBand: formatStipendBand(tiers.mass_recruiter),
     bestMatch: { role: 'Intern Trainee', have: [], missing: ['Communication', 'MS Office', 'Basic Computer Skills'], matchPct: 40 },
     allRoles: [{ role: 'Intern Trainee', have: [], missing: ['Communication', 'MS Office', 'Basic Computer Skills'], matchPct: 40 }],
   });
@@ -233,8 +271,8 @@ export function getInternshipMatches(skills: string[], role?: string): Internshi
   return results.slice(0, 15);
 }
 
-export function fetchInternshipMatch(skills: string[], role?: string): Promise<{ internships: InternshipMatch[] }> {
-  return Promise.resolve({ internships: getInternshipMatches(skills, role) });
+export async function fetchInternshipMatch(skills: string[], role?: string): Promise<{ internships: InternshipMatch[] }> {
+  return { internships: await getInternshipMatches(skills, role) };
 }
 
 export async function fetchCombinedInternshipMatch(skills: string[], roles: string[]): Promise<{ internships: InternshipMatch[] }> {
@@ -242,7 +280,7 @@ export async function fetchCombinedInternshipMatch(skills: string[], roles: stri
   const targets = uniqueRoles.length ? uniqueRoles : [undefined];
   const byCompany = new Map<string, InternshipMatch>();
   for (const role of targets) {
-    for (const match of getInternshipMatches(skills, role)) {
+    for (const match of await getInternshipMatches(skills, role)) {
       const existing = byCompany.get(match.company);
       if (!existing || match.bestMatch.matchPct > existing.bestMatch.matchPct) byCompany.set(match.company, match);
     }

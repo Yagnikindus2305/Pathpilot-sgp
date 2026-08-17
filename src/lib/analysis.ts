@@ -183,6 +183,11 @@ const SECTION_GROUPS: Record<string, string[]> = {
   'Skills': ['skills', 'technical skills', 'core competencies'],
   'Projects': ['projects', 'project experience'],
   'Summary/Objective': ['summary', 'objective', 'profile'],
+  // A distinct Certifications section is a real, recruiter-visible signal
+  // (AWS/OSCP/PMP-style credentials) that the previous 5 groups never
+  // credited on its own — it only counted if it happened to overlap with
+  // "Skills" keyword matching.
+  'Certifications': ['certifications', 'certificates', 'licenses & certifications'],
 };
 
 const ACTION_VERBS = [
