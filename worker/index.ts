@@ -5,7 +5,10 @@ import { createClient } from '@supabase/supabase-js';
 // how this file already hand-types other Workers-only globals (e.g. `caches`
 // below in searchJobs).
 interface WorkersAIBinding {
-  run(model: string, input: { messages: { role: string; content: string }[]; max_tokens?: number }): Promise<{ response?: string }>;
+  // `response` is typed unknown, not string — some models return an object
+  // here directly (e.g. when they detect the prompt wants structured JSON)
+  // instead of a text blob, so callers must handle both shapes.
+  run(model: string, input: { messages: { role: string; content: string }[]; max_tokens?: number }): Promise<{ response?: unknown }>;
 }
 
 export interface Env {
@@ -259,13 +262,21 @@ async function inferRole(request: Request, env: Env): Promise<Response> {
       max_tokens: 2500,
     });
 
-    const rawText = aiResult.response || '';
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const rawResponse = aiResult.response;
     let parsed: unknown;
-    try {
-      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
-    } catch {
-      return json({ message: 'AI response could not be parsed.' }, 502);
+    if (typeof rawResponse === 'string') {
+      const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+      try {
+        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawResponse);
+      } catch {
+        return json({ message: 'AI response could not be parsed.' }, 502);
+      }
+    } else if (rawResponse && typeof rawResponse === 'object') {
+      // Some models return the structured object directly rather than a
+      // JSON-encoded string when the prompt clearly asks for JSON.
+      parsed = rawResponse;
+    } else {
+      return json({ message: 'AI returned an empty response.' }, 502);
     }
 
     const validated = validateAIPayload(parsed);
