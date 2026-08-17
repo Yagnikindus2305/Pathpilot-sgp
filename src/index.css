@@ -43,7 +43,7 @@ button:disabled { cursor: not-allowed; opacity: .58; }
 :root[data-theme="dark"] .tip-card { background: var(--surface-muted); border-color: var(--border); }
 :root[data-theme="dark"] .tip-card strong { color: var(--accent); }
 :root[data-theme="dark"] .tip-card p { color: var(--text-muted); }
-.sidebar { position: relative; width: 256px; flex: 0 0 256px; background: linear-gradient(180deg, #fff 0%, #fff 65%, #f5f7ff 100%); border-right: 1px solid var(--border); padding: 30px 16px 18px; display: flex; flex-direction: column; min-height: 100vh; z-index: 20; }
+.sidebar { position: sticky; top: 0; width: 256px; flex: 0 0 256px; background: linear-gradient(180deg, #fff 0%, #fff 65%, #f5f7ff 100%); border-right: 1px solid var(--border); padding: 30px 16px 18px; display: flex; flex-direction: column; height: 100vh; overflow-y: auto; z-index: 20; }
 .sidebar::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, #3b5bdb, #7189eb, #79e4b0); }
 .brand { display: inline-flex; align-items: center; gap: 11px; color: var(--text); font-family: Manrope, sans-serif; padding: 0 14px; }
 .brand-word { font-size: 21px; font-weight: 800; letter-spacing: -.06em; }
@@ -115,6 +115,31 @@ nav { display: grid; gap: 5px; }
 .skill-input-row { display: flex; gap: 8px; }.skill-input-row input { flex: 1; }
 .tag-cloud .skill-tag button { border: 0; background: none; color: inherit; display: inline-flex; margin-left: 4px; padding: 0; cursor: pointer; }
 .growth-skills-list { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+.password-input-wrap { position: relative; display: flex; }
+.password-input-wrap input { flex: 1; padding-right: 42px !important; }
+.password-toggle { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: 0; color: var(--text-muted); display: grid; place-items: center; padding: 6px; border-radius: 6px; }
+.password-toggle:hover { color: var(--text); background: var(--surface-muted); }
+.password-strength { margin-top: 9px; }
+.strength-bar { height: 5px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.strength-bar div { height: 100%; border-radius: 4px; transition: width .2s; }
+.strength-bar.strength-0 div, .strength-bar.strength-1 div { background: #e0524a; }
+.strength-bar.strength-2 div { background: #dd9433; }
+.strength-bar.strength-3 div { background: #cbb62b; }
+.strength-bar.strength-4 div { background: #6fbf5c; }
+.strength-bar.strength-5 div { background: #1f9d63; }
+.strength-label { font-size: 11px; font-weight: 700; margin-top: 5px; display: inline-block; }
+.strength-label.strength-0, .strength-label.strength-1 { color: #d6473e; }
+.strength-label.strength-2 { color: #c17c1c; }
+.strength-label.strength-3 { color: #a89322; }
+.strength-label.strength-4 { color: #4f9e42; }
+.strength-label.strength-5 { color: #1a8a56; }
+.strength-issues { margin: 6px 0 0; padding-left: 18px; color: var(--text-muted); font-size: 11.5px; line-height: 1.7; }
+
+.phone-input-group { display: flex; gap: 8px; }
+.phone-input-group select { flex: 0 0 40%; min-width: 0; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); padding: 13px 10px; outline: none; font-size: 13px; }
+.phone-input-group input { flex: 1; min-width: 0; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); padding: 13px 14px; outline: none; font-size: 15px; }
+.phone-input-group select:focus, .phone-input-group input:focus { border-color: #8494e6; box-shadow: 0 0 0 3px #536bd51a; }
 .experience-card .section-title { margin-bottom: 4px; }.experience-subtitle { color: var(--text-muted); font-size: 12px; margin: 0 0 20px; }.experience-list { display: grid; gap: 12px; }.experience-row { display: flex; gap: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 17px; position: relative; }.experience-avatar { width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px; background: #dce5ff; color: #3956c1; display: grid; place-items: center; font: 800 15px Manrope; }.experience-body { flex: 1; min-width: 0; }.experience-head { display: flex; align-items: center; gap: 9px; }.experience-head strong { color: #23324d; font: 700 13px Manrope; }.experience-company { color: #3b5bdb; font-size: 11px; font-weight: 600; margin-top: 3px; }.experience-meta { display: flex; gap: 14px; color: var(--text-muted); font-size: 10px; margin-top: 6px; }.experience-desc { color: var(--text-muted); font-size: 11px; line-height: 1.6; margin: 10px 0 0; padding-top: 10px; border-top: 1px solid #f0f3f8; }.experience-remove { position: absolute; top: 14px; right: 14px; border: 0; background: var(--surface-muted); color: var(--text-muted); width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; }.experience-remove:hover { background: #fff0ef; color: #b42318; }
 .radar-wrap { display: grid; place-items: center; padding: 10px 0 18px; }.radar-ring { fill: none; stroke: var(--border); stroke-width: 1; }.radar-axis { stroke: var(--border); stroke-width: 1; }.radar-shape { fill: #4661d2; fill-opacity: .16; stroke: #4661d2; stroke-width: 2; stroke-linejoin: round; }.radar-label { fill: var(--text-muted); font-size: 10px; font-weight: 600; }.radar-card .text-btn { display: flex; justify-content: center; width: 100%; }
 .milestone-list { display: grid; gap: 12px; }.milestone-row { display: flex; align-items: center; gap: 12px; }.milestone-dot { width: 22px; height: 22px; flex-shrink: 0; border-radius: 50%; border: 2px solid #dde3ec; background: var(--surface); }.milestone-row strong { color: var(--text-secondary); font-size: 12px; font-weight: 600; }.milestone-row p { margin: 2px 0 0; color: var(--text-muted); font-size: 10px; }.milestone-row.completed .milestone-dot { border-color: #27ab70; background: #27ab70; position: relative; }.milestone-row.completed .milestone-dot::after { content: ''; position: absolute; left: 6px; top: 2px; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }.milestone-row.completed strong { color: #8a97a8; text-decoration: line-through; }.milestone-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }.milestone-footer strong { color: var(--text); font-size: 13px; }.milestone-footer span { color: var(--text-muted); font-size: 10px; }

@@ -1,7 +1,7 @@
 ﻿import { createContext, Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
   ArrowRight, BarChart3, BookOpen, BriefcaseBusiness, Check, CheckCircle2, ChevronRight, Circle,
-  Compass, FileSearch, FileText, GraduationCap, KeyRound, LayoutDashboard, Linkedin, Lock, LogOut,
+  Compass, Eye, EyeOff, FileSearch, FileText, GraduationCap, KeyRound, LayoutDashboard, Linkedin, Lock, LogOut,
   Mail, Menu, MessageCircle, Moon, Pencil, Play, Plus, Shield, ShieldCheck, Sparkles, Sun, Target,
   TrendingUp, Trash2, Trophy, Upload, UserRound, X, Zap,
 } from 'lucide-react';
@@ -19,7 +19,8 @@ import { canAccess, computeProgression, type ModuleId, type ProgressionState } f
 import { getCategoryForRole, getRoleByTitle, getRoleGrowthSkills, getRoleRequiredSkills, getRoleRoadmap, getRolesInCategory, getToolCheck } from '@/lib/pathpilot';
 import { fetchRoadmap, fetchToolCheck, fetchCompanyMatch, fetchCombinedCompanyMatch, type CompanyMatch, type ToolCheckItem, type GroupedOptions } from '@/lib/api';
 import { fetchExperienceText } from '@/lib/experience';
-import { isValidEmail, isValidPhone, sanitizePhoneInput, EMAIL_HELP_TEXT, PHONE_HELP_TEXT } from '@/lib/validation';
+import { isValidEmail, isValidPhone, EMAIL_HELP_TEXT, PHONE_HELP_TEXT, parsePhoneValue, formatPhoneValue, sanitizePhoneDigits, checkPasswordStrength, isStrongPassword, PASSWORD_HELP_TEXT } from '@/lib/validation';
+import { COUNTRY_DIAL_CODES } from '@/lib/countries';
 import { INDIAN_STATES, getCitiesForDistrict, getDistrictsForState } from '@/lib/india';
 import { extractResumeText } from '@/lib/resumeText';
 import { type ApplicationStatus, type AptitudeResult, type JobApplication, type Milestone, type Profile, type ResumeAnalysis, type ResumeComparison, type RoadmapSkill, type TargetJob, type WorkExperience } from '@/lib/types';
@@ -90,6 +91,49 @@ function ThemeToggle({ className }: { className?: string }) {
   </button>;
 }
 
+function PasswordInput({ value, onChange, placeholder, showStrength = false }: { value: string; onChange: (value: string) => void; placeholder?: string; showStrength?: boolean }) {
+  const [visible, setVisible] = useState(false);
+  const strength = showStrength ? checkPasswordStrength(value) : null;
+  return <div className="password-field">
+    <div className="password-input-wrap">
+      <input required minLength={6} type={visible ? 'text' : 'password'} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder || 'At least 6 characters'} />
+      <button type="button" className="password-toggle" tabIndex={-1} onClick={() => setVisible((v) => !v)} aria-label={visible ? 'Hide password' : 'Show password'}>
+        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
+      </button>
+    </div>
+    {showStrength && value && strength && <div className="password-strength">
+      <div className={`strength-bar strength-${strength.score}`}><div style={{ width: `${(strength.score / 5) * 100}%` }} /></div>
+      <span className={`strength-label strength-${strength.score}`}>{strength.label}</span>
+      {strength.issues.length > 0 && <ul className="strength-issues">{strength.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+    </div>}
+  </div>;
+}
+
+// Combined country-code + national-number entry. The stored value is always
+// "+<dialcode> <digits>" (see formatPhoneValue) so it round-trips cleanly —
+// a bare digit string (the format used before country selection existed) is
+// parsed as an Indian number, so existing profiles keep working unchanged.
+function PhoneInput({ value, onChange, required = false }: { value: string; onChange: (value: string) => void; required?: boolean }) {
+  const parsed = parsePhoneValue(value);
+  return <div className="phone-input-group">
+    <select
+      value={parsed.iso2}
+      onChange={(e) => onChange(formatPhoneValue(e.target.value, parsed.digits))}
+      aria-label="Country code"
+    >
+      {COUNTRY_DIAL_CODES.map((c) => <option key={c.iso2} value={c.iso2}>{c.name} (+{c.dialCode})</option>)}
+    </select>
+    <input
+      required={required}
+      type="tel"
+      inputMode="numeric"
+      value={parsed.digits}
+      onChange={(e) => onChange(formatPhoneValue(parsed.iso2, sanitizePhoneDigits(e.target.value)))}
+      placeholder={parsed.iso2 === 'IN' ? '9876543210' : 'Phone number'}
+    />
+  </div>;
+}
+
 // Icon mark: a gradient rounded-square with an ascending bar chart + trend
 // line, echoing the growth/placement-tracking idea the app is built around.
 function BrandMark({ size = 32 }: { size?: number }) {
@@ -142,7 +186,7 @@ function ResetPasswordScreen() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (!isStrongPassword(password)) { setError(`Choose a stronger password. ${PASSWORD_HELP_TEXT}`); return; }
     setError(''); setBusy(true);
     const result = await updatePassword(password);
     if (result.error) setError(result.error);
@@ -159,7 +203,7 @@ function ResetPasswordScreen() {
       <div className="mobile-brand"><BrandLogo /></div>
       <div className="auth-heading"><div className="eyebrow">RESET PASSWORD</div><h2>Choose a new password.</h2><p>This replaces your old password immediately.</p></div>
       <form onSubmit={submit} className="auth-form">
-        <label>New password<input required minLength={6} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" /></label>
+        <label>New password<PasswordInput value={password} onChange={setPassword} placeholder="At least 8 characters" showStrength /></label>
         {error && <div className="form-alert error"><X size={16} />{error}</div>}
         <button className="primary-btn full" disabled={busy}>{busy ? 'Saving…' : 'Update password'}<ArrowRight size={18} /></button>
       </form>
@@ -193,7 +237,7 @@ function PhoneGate() {
       <div className="mobile-brand"><BrandLogo /></div>
       <div className="auth-heading"><div className="eyebrow">{profile?.full_name ? `Welcome, ${profile.full_name.split(' ')[0]}.` : 'WELCOME'}</div><h2>Add your phone number.</h2><p>Required once, so your profile stays complete and verifiable.</p></div>
       <form onSubmit={submit} className="auth-form">
-        <label>Phone number<input required type="tel" inputMode="numeric" maxLength={10} value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} placeholder="9876543210" /></label>
+        <label>Phone number<PhoneInput required value={phone} onChange={setPhone} /></label>
         {error && <div className="form-alert error"><X size={16} />{error}</div>}
         <button className="primary-btn full" disabled={busy}>{busy ? 'Saving…' : 'Continue'}<ArrowRight size={18} /></button>
       </form>
@@ -292,6 +336,10 @@ function AuthScreen() {
     setError(''); setNotice('');
     if (!isValidEmail(email)) {
       setError(EMAIL_HELP_TEXT);
+      return;
+    }
+    if (mode === 'signup' && !isStrongPassword(password)) {
+      setError(`Choose a stronger password. ${PASSWORD_HELP_TEXT}`);
       return;
     }
     if (mode === 'signup' && !isValidPhone(phone)) {
@@ -400,9 +448,9 @@ function AuthScreen() {
         ) : <form onSubmit={submit} className="auth-form">
           {mode === 'signup' && <label>Full name<input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Aarav Sharma" /></label>}
           <label>Email address<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
-          <label>Password<input required minLength={6} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 6 characters" /></label>
+          <label>Password<PasswordInput value={password} onChange={setPassword} placeholder={mode === 'signup' ? 'At least 8 characters' : 'Your password'} showStrength={mode === 'signup'} /></label>
           {mode === 'signin' && <button type="button" className="forgot-link" onClick={() => { setForgotMode(true); setError(''); setNotice(''); }}>Forgot password?</button>}
-          {mode === 'signup' && <label>Phone number<input required type="tel" inputMode="numeric" maxLength={10} value={phone} onChange={(e) => setPhone(sanitizePhoneInput(e.target.value))} placeholder="9876543210" /></label>}
+          {mode === 'signup' && <label>Phone number<PhoneInput required value={phone} onChange={setPhone} /></label>}
           {error && <div className="form-alert error"><X size={16} />{error}</div>}
           {notice && <div className="form-alert success"><CheckCircle2 size={16} />{notice}</div>}
           <button className="primary-btn full" disabled={busy}>{busy ? 'Please wait…' : mode === 'signin' ? 'Enter workspace' : 'Create account'}<ArrowRight size={18} /></button>
@@ -1613,7 +1661,7 @@ function ProfilePage({ go, progression }: { go: (module: Module) => void; progre
   const filled = [form.full_name, form.college === 'Other (type your university)' ? form.college_other : form.college, form.course === 'Other (type your course)' ? form.course_other : form.course, form.year, form.state, form.district, form.city === 'Other (type your city)' ? form.city_other : form.city, form.phone, form.target_role === 'Other (type your role)' ? form.role_other : form.target_role].filter(Boolean).length;
   const completion = Math.round(filled / 9 * 100);
 
-  return <><PageHeader eyebrow="MODULE 01 / AUTH & PROFILE" title="Your career profile."><button className="secondary-btn" onClick={() => setEditing(!editing)}><Pencil size={15} /> {editing ? 'Cancel' : 'Edit profile'}</button></PageHeader><div className="profile-completion"><div><strong>Profile completion</strong><span>{completion}% — {completion === 100 ? 'Looking sharp.' : 'Add the rest to unlock your full path.'}</span></div><div className="completion-track"><div style={{ width: `${completion}%` }} /></div></div><div className="profile-page-card"><div className="profile-hero"><div className="large-avatar">{profile?.full_name?.charAt(0) || 'E'}</div><div><div className="verified"><ShieldCheck size={15} /> Verified profile</div><h2>{profile?.full_name || 'Your name'}</h2><p>{profile?.target_role || 'Choose a target role to personalize your path.'}</p></div></div>{editing ? <form onSubmit={save} className="profile-edit-form"><div className="form-grid"><label>Full name<input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></label><GroupedSelect label="College / university" value={form.college} onChange={(value) => setForm({ ...form, college: value })} options={collegeGroups} placeholder="Select your university" otherLabel="Other (type your university)" otherValue={form.college_other} onOtherChange={(value) => setForm({ ...form, college_other: value })} /><GroupedSelect label="Course / branch" value={form.course} onChange={(value) => setForm({ ...form, course: value })} options={courseGroups} placeholder="Select your course" otherLabel="Other (type your course)" otherValue={form.course_other} onOtherChange={(value) => setForm({ ...form, course_other: value })} /><label>Year of study<select value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })}><option value="">Select year</option>{courseYears.map((yearOption) => <option value={yearOption} key={yearOption}>{yearOption}</option>)}</select></label><label>State<select value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, district: '' })}><option value="">Select state</option>{INDIAN_STATES.map((s) => <option value={s} key={s}>{s}</option>)}</select></label><label>District<select value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value, city: '', city_other: '' })} disabled={!form.state}><option value="">{form.state ? 'Select district' : 'Select a state first'}</option>{getDistrictsForState(form.state).map((d) => <option value={d} key={d}>{d}</option>)}</select></label><label>City / Town<select value={form.city} disabled={!form.district} onChange={(e) => setForm({ ...form, city: e.target.value })}><option value="">{form.district ? 'Select your city/town' : 'Select a district first'}</option>{getCitiesForDistrict(form.district).map((c) => <option value={c} key={c}>{c}</option>)}<option value="Other (type your city)">Other (type your city)</option></select>{form.city === 'Other (type your city)' && <input value={form.city_other} onChange={(e) => setForm({ ...form, city_other: e.target.value })} placeholder="Type your city or town" />}</label><label>Phone<input type="tel" inputMode="numeric" maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: sanitizePhoneInput(e.target.value) })} placeholder="9876543210" /></label><GroupedSelect label="Target role" value={form.target_role} onChange={(value) => setForm({ ...form, target_role: value, target_roles: [] })} options={roleGroups} placeholder="Choose a role" otherLabel="Other (type your role)" otherValue={form.role_other} onOtherChange={(value) => setForm({ ...form, role_other: value })} /></div><AdditionalRolesPicker form={form} setForm={setForm} />{error && <div className="form-alert error"><X size={16} />{error}</div>}{saved && <div className="form-alert success"><CheckCircle2 size={16} /> Profile saved.</div>}<button className="primary-btn" type="submit">Save profile <ArrowRight size={16} /></button></form> : <ProfileFields profile={profile} />}</div>{!editing && <button className="primary-btn" onClick={() => go('resume')}>Continue to resume analysis <ArrowRight size={16} /></button>}
+  return <><PageHeader eyebrow="MODULE 01 / AUTH & PROFILE" title="Your career profile."><button className="secondary-btn" onClick={() => setEditing(!editing)}><Pencil size={15} /> {editing ? 'Cancel' : 'Edit profile'}</button></PageHeader><div className="profile-completion"><div><strong>Profile completion</strong><span>{completion}% — {completion === 100 ? 'Looking sharp.' : 'Add the rest to unlock your full path.'}</span></div><div className="completion-track"><div style={{ width: `${completion}%` }} /></div></div><div className="profile-page-card"><div className="profile-hero"><div className="large-avatar">{profile?.full_name?.charAt(0) || 'E'}</div><div><div className="verified"><ShieldCheck size={15} /> Verified profile</div><h2>{profile?.full_name || 'Your name'}</h2><p>{profile?.target_role || 'Choose a target role to personalize your path.'}</p></div></div>{editing ? <form onSubmit={save} className="profile-edit-form"><div className="form-grid"><label>Full name<input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></label><GroupedSelect label="College / university" value={form.college} onChange={(value) => setForm({ ...form, college: value })} options={collegeGroups} placeholder="Select your university" otherLabel="Other (type your university)" otherValue={form.college_other} onOtherChange={(value) => setForm({ ...form, college_other: value })} /><GroupedSelect label="Course / branch" value={form.course} onChange={(value) => setForm({ ...form, course: value })} options={courseGroups} placeholder="Select your course" otherLabel="Other (type your course)" otherValue={form.course_other} onOtherChange={(value) => setForm({ ...form, course_other: value })} /><label>Year of study<select value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })}><option value="">Select year</option>{courseYears.map((yearOption) => <option value={yearOption} key={yearOption}>{yearOption}</option>)}</select></label><label>State<select value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, district: '' })}><option value="">Select state</option>{INDIAN_STATES.map((s) => <option value={s} key={s}>{s}</option>)}</select></label><label>District<select value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value, city: '', city_other: '' })} disabled={!form.state}><option value="">{form.state ? 'Select district' : 'Select a state first'}</option>{getDistrictsForState(form.state).map((d) => <option value={d} key={d}>{d}</option>)}</select></label><label>City / Town<select value={form.city} disabled={!form.district} onChange={(e) => setForm({ ...form, city: e.target.value })}><option value="">{form.district ? 'Select your city/town' : 'Select a district first'}</option>{getCitiesForDistrict(form.district).map((c) => <option value={c} key={c}>{c}</option>)}<option value="Other (type your city)">Other (type your city)</option></select>{form.city === 'Other (type your city)' && <input value={form.city_other} onChange={(e) => setForm({ ...form, city_other: e.target.value })} placeholder="Type your city or town" />}</label><label>Phone<PhoneInput value={form.phone} onChange={(value) => setForm({ ...form, phone: value })} /></label><GroupedSelect label="Target role" value={form.target_role} onChange={(value) => setForm({ ...form, target_role: value, target_roles: [] })} options={roleGroups} placeholder="Choose a role" otherLabel="Other (type your role)" otherValue={form.role_other} onOtherChange={(value) => setForm({ ...form, role_other: value })} /></div><AdditionalRolesPicker form={form} setForm={setForm} />{error && <div className="form-alert error"><X size={16} />{error}</div>}{saved && <div className="form-alert success"><CheckCircle2 size={16} /> Profile saved.</div>}<button className="primary-btn" type="submit">Save profile <ArrowRight size={16} /></button></form> : <ProfileFields profile={profile} />}</div>{!editing && <button className="primary-btn" onClick={() => go('resume')}>Continue to resume analysis <ArrowRight size={16} /></button>}
     <div className="profile-tabs">
       <button className={tab === 'modules' ? 'profile-tab active' : 'profile-tab'} onClick={() => setTab('modules')}><FileText size={15} /> Modules</button>
       <button className={tab === 'target' ? 'profile-tab active' : 'profile-tab'} onClick={() => setTab('target')}><Target size={15} /> Target Job</button>
@@ -1652,7 +1700,7 @@ function ProfileModal({ profile, onClose, updateProfile }: { profile: Profile | 
     else setSaved(true);
   }
 
-  return <div className="modal-backdrop" onClick={onClose}><div className="profile-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">YOUR PROFILE</div><h2>Keep it current.</h2></div><button onClick={onClose}><X size={19} /></button></div><form onSubmit={save}><div className="form-grid"><label>Full name<input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></label><GroupedSelect label="College / university" value={form.college} onChange={(value) => setForm({ ...form, college: value })} options={collegeGroups} placeholder="Select your university" otherLabel="Other (type your university)" otherValue={form.college_other} onOtherChange={(value) => setForm({ ...form, college_other: value })} /><GroupedSelect label="Course / branch" value={form.course} onChange={(value) => setForm({ ...form, course: value })} options={courseGroups} placeholder="Select your course" otherLabel="Other (type your course)" otherValue={form.course_other} onOtherChange={(value) => setForm({ ...form, course_other: value })} /><label>Year of study<select value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })}><option value="">Select year</option>{courseYears.map((yearOption) => <option value={yearOption} key={yearOption}>{yearOption}</option>)}</select></label><label>State<select value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, district: '' })}><option value="">Select state</option>{INDIAN_STATES.map((s) => <option value={s} key={s}>{s}</option>)}</select></label><label>District<select value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value, city: '', city_other: '' })} disabled={!form.state}><option value="">{form.state ? 'Select district' : 'Select a state first'}</option>{getDistrictsForState(form.state).map((d) => <option value={d} key={d}>{d}</option>)}</select></label><label>City / Town<select value={form.city} disabled={!form.district} onChange={(e) => setForm({ ...form, city: e.target.value })}><option value="">{form.district ? 'Select your city/town' : 'Select a district first'}</option>{getCitiesForDistrict(form.district).map((c) => <option value={c} key={c}>{c}</option>)}<option value="Other (type your city)">Other (type your city)</option></select>{form.city === 'Other (type your city)' && <input value={form.city_other} onChange={(e) => setForm({ ...form, city_other: e.target.value })} placeholder="Type your city or town" />}</label><label>Phone<input type="tel" inputMode="numeric" maxLength={10} value={form.phone} onChange={(e) => setForm({ ...form, phone: sanitizePhoneInput(e.target.value) })} placeholder="9876543210" /></label><GroupedSelect label="Target role" value={form.target_role} onChange={(value) => setForm({ ...form, target_role: value, target_roles: [] })} options={roleGroups} placeholder="Choose a role" otherLabel="Other (type your role)" otherValue={form.role_other} onOtherChange={(value) => setForm({ ...form, role_other: value })} /></div><AdditionalRolesPicker form={form} setForm={setForm} />{error && <div className="form-alert error"><X size={16} />{error}</div>}{saved && <div className="form-alert success"><CheckCircle2 size={16} /> Profile saved.</div>}<button className="primary-btn" type="submit">Save profile <ArrowRight size={16} /></button></form></div></div>;
+  return <div className="modal-backdrop" onClick={onClose}><div className="profile-modal" onClick={(e) => e.stopPropagation()}><div className="modal-head"><div><div className="eyebrow">YOUR PROFILE</div><h2>Keep it current.</h2></div><button onClick={onClose}><X size={19} /></button></div><form onSubmit={save}><div className="form-grid"><label>Full name<input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></label><GroupedSelect label="College / university" value={form.college} onChange={(value) => setForm({ ...form, college: value })} options={collegeGroups} placeholder="Select your university" otherLabel="Other (type your university)" otherValue={form.college_other} onOtherChange={(value) => setForm({ ...form, college_other: value })} /><GroupedSelect label="Course / branch" value={form.course} onChange={(value) => setForm({ ...form, course: value })} options={courseGroups} placeholder="Select your course" otherLabel="Other (type your course)" otherValue={form.course_other} onOtherChange={(value) => setForm({ ...form, course_other: value })} /><label>Year of study<select value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })}><option value="">Select year</option>{courseYears.map((yearOption) => <option value={yearOption} key={yearOption}>{yearOption}</option>)}</select></label><label>State<select value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, district: '' })}><option value="">Select state</option>{INDIAN_STATES.map((s) => <option value={s} key={s}>{s}</option>)}</select></label><label>District<select value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value, city: '', city_other: '' })} disabled={!form.state}><option value="">{form.state ? 'Select district' : 'Select a state first'}</option>{getDistrictsForState(form.state).map((d) => <option value={d} key={d}>{d}</option>)}</select></label><label>City / Town<select value={form.city} disabled={!form.district} onChange={(e) => setForm({ ...form, city: e.target.value })}><option value="">{form.district ? 'Select your city/town' : 'Select a district first'}</option>{getCitiesForDistrict(form.district).map((c) => <option value={c} key={c}>{c}</option>)}<option value="Other (type your city)">Other (type your city)</option></select>{form.city === 'Other (type your city)' && <input value={form.city_other} onChange={(e) => setForm({ ...form, city_other: e.target.value })} placeholder="Type your city or town" />}</label><label>Phone<PhoneInput value={form.phone} onChange={(value) => setForm({ ...form, phone: value })} /></label><GroupedSelect label="Target role" value={form.target_role} onChange={(value) => setForm({ ...form, target_role: value, target_roles: [] })} options={roleGroups} placeholder="Choose a role" otherLabel="Other (type your role)" otherValue={form.role_other} onOtherChange={(value) => setForm({ ...form, role_other: value })} /></div><AdditionalRolesPicker form={form} setForm={setForm} />{error && <div className="form-alert error"><X size={16} />{error}</div>}{saved && <div className="form-alert success"><CheckCircle2 size={16} /> Profile saved.</div>}<button className="primary-btn" type="submit">Save profile <ArrowRight size={16} /></button></form></div></div>;
 }
 
 function ProfileFields({ profile }: { profile: Profile | null }) {
