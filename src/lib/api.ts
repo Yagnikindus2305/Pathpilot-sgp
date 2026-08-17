@@ -176,3 +176,76 @@ export async function fetchCombinedCompanyMatch(skills: string[], roles: string[
   }
   return { companies: Array.from(byCompany.values()).sort((a, b) => b.bestMatch.matchPct - a.bestMatch.matchPct) };
 }
+
+export interface InternshipMatch {
+  company: string;
+  category: string;
+  tier: string;
+  stipendBand: string;
+  bestMatch: CompanyRoleMatch;
+  allRoles: CompanyRoleMatch[];
+}
+
+// Internship stipends aren't in the source data (it's a full-time hiring
+// dataset) — derived from each company's existing tier instead of a separate
+// 90-company dataset, so this stays consistent with "Companies you can
+// target" rather than drifting out of sync. ₹6,000-8,000/month is the
+// baseline floor for the most accessible tier, scaling up from there.
+function stipendBandForTier(tier: string): string {
+  const t = tier.toLowerCase();
+  if (t.includes('dream')) return '₹25,000–50,000/month';
+  if (t.includes('tier-1')) return '₹15,000–25,000/month';
+  if (t.includes('mid')) return '₹8,000–15,000/month';
+  return '₹6,000–8,000/month';
+}
+
+export function getInternshipMatches(skills: string[], role?: string): InternshipMatch[] {
+  const userSkills = (skills || []).map((s) => s.toLowerCase());
+  const relevantCategories = inferCompanyCategories(role || '');
+
+  const results: InternshipMatch[] = [];
+  for (const c of companyList) {
+    if (!relevantCategories.includes(c.category)) continue;
+    const roleMatches: CompanyRoleMatch[] = [];
+    for (const r of c.roles || []) {
+      const { have, missing, matchPct } = matchRole(userSkills, r.skills, userSkills);
+      if (have.length) roleMatches.push({ role: `${r.role} Intern`, have, missing, matchPct });
+    }
+    if (roleMatches.length) {
+      roleMatches.sort((a, b) => b.matchPct - a.matchPct);
+      results.push({ company: c.name, category: c.category, tier: c.tier, stipendBand: stipendBandForTier(c.tier), bestMatch: roleMatches[0], allRoles: roleMatches });
+    }
+  }
+  results.sort((a, b) => b.bestMatch.matchPct - a.bestMatch.matchPct);
+  if (results.length > 14) results.length = 14;
+
+  // Guaranteed floor entry, same idea as getCompanyMatches: a beginner with
+  // zero skill overlap should never see an empty list.
+  results.push({
+    company: 'Campus / Walk-in Internship Drives',
+    category: 'Entry-Level',
+    tier: 'Mass recruiter',
+    stipendBand: '₹6,000–8,000/month',
+    bestMatch: { role: 'Intern Trainee', have: [], missing: ['Communication', 'MS Office', 'Basic Computer Skills'], matchPct: 40 },
+    allRoles: [{ role: 'Intern Trainee', have: [], missing: ['Communication', 'MS Office', 'Basic Computer Skills'], matchPct: 40 }],
+  });
+
+  return results.slice(0, 15);
+}
+
+export function fetchInternshipMatch(skills: string[], role?: string): Promise<{ internships: InternshipMatch[] }> {
+  return Promise.resolve({ internships: getInternshipMatches(skills, role) });
+}
+
+export async function fetchCombinedInternshipMatch(skills: string[], roles: string[]): Promise<{ internships: InternshipMatch[] }> {
+  const uniqueRoles = Array.from(new Set(roles.filter(Boolean)));
+  const targets = uniqueRoles.length ? uniqueRoles : [undefined];
+  const byCompany = new Map<string, InternshipMatch>();
+  for (const role of targets) {
+    for (const match of getInternshipMatches(skills, role)) {
+      const existing = byCompany.get(match.company);
+      if (!existing || match.bestMatch.matchPct > existing.bestMatch.matchPct) byCompany.set(match.company, match);
+    }
+  }
+  return { internships: Array.from(byCompany.values()).sort((a, b) => b.bestMatch.matchPct - a.bestMatch.matchPct).slice(0, 15) };
+}
