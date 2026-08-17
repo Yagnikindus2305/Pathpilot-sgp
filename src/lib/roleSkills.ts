@@ -164,6 +164,42 @@ export const ROLE_SKILLS: Record<string, RoleSkillData> = {
     advanced: ['ERP', 'Inventory Modeling', 'Forecasting', 'KPI Tracking', 'Optimization'],
     salaryLPA: { min: 4, max: 10 },
   },
+  'Chartered Accountant': {
+    must: ['Accounting Standards', 'Taxation', 'Auditing', 'Financial Reporting', 'Excel'],
+    nice: ['GST', 'Tally', 'Cost Accounting', 'Direct Tax', 'Companies Act'],
+    advanced: ['SAP FICO', 'International Taxation', 'Forensic Accounting', 'Transfer Pricing', 'IFRS'],
+    salaryLPA: { min: 6, max: 15 },
+  },
+  'Investment Banker': {
+    must: ['Financial Modeling', 'Valuation', 'Excel', 'PowerPoint', 'Accounting'],
+    nice: ['DCF Analysis', 'M&A Analysis', 'Pitch Books', 'Comparable Company Analysis', 'LBO Modeling'],
+    advanced: ['Bloomberg Terminal', 'Capital Markets', 'Deal Structuring', 'Due Diligence', 'Industry Research'],
+    salaryLPA: { min: 8, max: 20 },
+  },
+  'Equity Research Analyst': {
+    must: ['Financial Statement Analysis', 'Valuation', 'Excel', 'Industry Research', 'Financial Modeling'],
+    nice: ['Equity Research Reports', 'DCF Analysis', 'Ratio Analysis', 'Bloomberg Terminal', 'Sector Analysis'],
+    advanced: ['CFA Concepts', 'Portfolio Theory', 'Macroeconomic Analysis', 'Derivatives', 'Risk Modeling'],
+    salaryLPA: { min: 6, max: 14 },
+  },
+  'Management Consultant': {
+    must: ['Problem Solving', 'Excel', 'PowerPoint', 'Data Analysis', 'Client Communication'],
+    nice: ['Case Analysis', 'Market Sizing', 'Business Strategy', 'Process Improvement', 'Frameworks'],
+    advanced: ['Change Management', 'Digital Transformation', 'Operating Model Design', 'M&A Strategy', 'Stakeholder Management'],
+    salaryLPA: { min: 8, max: 18 },
+  },
+  'Journalist': {
+    must: ['News Writing', 'Research', 'Interviewing', 'Fact-Checking', 'AP Style'],
+    nice: ['SEO Writing', 'Digital Publishing', 'Social Media', 'Photography', 'Video Reporting'],
+    advanced: ['Investigative Journalism', 'Data Journalism', 'Multimedia Storytelling', 'Editorial Strategy', 'Audience Analytics'],
+    salaryLPA: { min: 3, max: 8 },
+  },
+  'Social Media Manager': {
+    must: ['Content Calendar', 'Copywriting', 'Analytics', 'Community Management', 'Canva'],
+    nice: ['Paid Social Ads', 'Influencer Marketing', 'Video Editing', 'Brand Voice', 'Trend Research'],
+    advanced: ['Social Media Strategy', 'Crisis Management', 'Marketing Automation', 'Cross-platform Campaigns', 'ROI Analysis'],
+    salaryLPA: { min: 3, max: 9 },
+  },
   'Entry-Level / Trainee Associate': {
     must: ['Communication', 'MS Office', 'Basic Computer Skills'],
     nice: ['Excel', 'Email Etiquette', 'Teamwork'],

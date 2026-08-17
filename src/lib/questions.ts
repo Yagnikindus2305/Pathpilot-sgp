@@ -412,6 +412,12 @@ const ROLE_TECHNICAL_DOMAIN: Record<string, string> = {
   'graphic designer': 'Design & Marketing',
   'digital marketer': 'Design & Marketing',
   'content writer': 'Design & Marketing',
+  'chartered accountant': 'Product & Business',
+  'investment banker': 'Product & Business',
+  'equity research analyst': 'Product & Business',
+  'management consultant': 'Product & Business',
+  'journalist': 'Design & Marketing',
+  'social media manager': 'Design & Marketing',
 };
 
 // Keyword fallback for a target role picked via free-text "Other" that
@@ -425,8 +431,8 @@ function inferTechnicalDomain(lowerRole: string): string | undefined {
   if (has('qa', 'test engineer', 'quality')) return 'QA & Testing';
   if (has('mobile', 'android', 'ios', 'flutter')) return 'Mobile Development';
   if (has('civil', 'mechanical', 'electrical', 'embedded', 'hardware', 'vlsi')) return 'Core Engineering';
-  if (has('product manager', 'project manager', 'scrum', 'business analyst', 'financial', 'hr ', 'operations', 'assistant')) return 'Product & Business';
-  if (has('design', 'ux', 'ui', 'marketing', 'content writer', 'graphic')) return 'Design & Marketing';
+  if (has('product manager', 'project manager', 'scrum', 'business analyst', 'financial', 'hr ', 'operations', 'assistant', 'accountant', 'accounting', 'banker', 'banking', 'consultant', 'equity research', 'auditor', 'tax')) return 'Product & Business';
+  if (has('design', 'ux', 'ui', 'marketing', 'content writer', 'graphic', 'journalist', 'social media', 'copywriter', 'video editor', 'photographer')) return 'Design & Marketing';
   if (has('developer', 'engineer', 'architect')) return 'Web & Software Development';
   return undefined;
 }

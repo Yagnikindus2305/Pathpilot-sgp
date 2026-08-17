@@ -1,7 +1,7 @@
 {
   "meta": {
     "description": "Broader role list grouped by category for the PathPilot dropdown.",
-    "totalTitles": 133,
+    "totalTitles": 135,
     "totalCategories": 19
   },
   "categories": [
@@ -332,6 +332,14 @@
     },
     {
       "title": "Risk Analyst",
+      "category": "Business & Finance"
+    },
+    {
+      "title": "Equity Research Analyst",
+      "category": "Business & Finance"
+    },
+    {
+      "title": "Management Consultant",
       "category": "Business & Finance"
     },
     {
