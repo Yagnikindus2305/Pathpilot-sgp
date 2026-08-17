@@ -6,6 +6,7 @@ export interface Env {
   SUPABASE_SERVICE_ROLE_KEY?: string;
   ADZUNA_APP_ID?: string;
   ADZUNA_APP_KEY?: string;
+  ANTHROPIC_API_KEY?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -73,6 +74,229 @@ async function deleteUser(request: Request, env: Env, targetId: string): Promise
   }
   console.warn(`[admin] User ${targetId} deleted by admin ${adminUserId}`);
   return json({ ok: true });
+}
+
+// Verifies the caller has a valid Supabase session, without requiring admin —
+// gates /api/roles/infer so the paid AI call can't be hit by anonymous
+// scripts, while staying open to any signed-in student.
+async function requireUser(request: Request, env: Env) {
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { error: json({ message: 'This feature is not configured (missing SUPABASE_SERVICE_ROLE_KEY secret).' }, 503) };
+  }
+  const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!token) return { error: json({ message: 'Missing auth token' }, 401) };
+
+  const supabaseAdmin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+  if (authError || !user) return { error: json({ message: 'Invalid or expired session' }, 401) };
+
+  return { supabaseAdmin, userId: user.id };
+}
+
+type RoadmapPriority = 'Must Have' | 'Nice to Have' | 'Advanced';
+
+interface AIRoadmapItem {
+  skill: string;
+  video: string;
+  priority: RoadmapPriority;
+}
+
+interface AIQuestion {
+  q: string;
+  options: string[];
+  answer: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+}
+
+interface AIRoleData {
+  role: string;
+  must: string[];
+  nice: string[];
+  advanced: string[];
+  salaryLPA: { min: number; max: number };
+  roadmap: AIRoadmapItem[];
+  technicalMcqs: AIQuestion[];
+}
+
+function skillVideoLink(skill: string): string {
+  return `https://www.youtube.com/results?search_query=${encodeURIComponent(skill + ' full course tutorial')}`;
+}
+
+const AI_ROLE_SYSTEM_PROMPT = `You are a career-data generator for a placement-prep platform used by Indian college students and job seekers. Given a single job/role title, you produce a strict JSON object describing the skills needed for that role, an entry-to-mid level India salary range in LPA (Lakhs Per Annum), and a technical multiple-choice quiz for the role.
+
+Respond with ONLY a single valid JSON object - no markdown code fences, no commentary before or after. The JSON must match exactly this shape:
+
+{
+  "must": string[],
+  "nice": string[],
+  "advanced": string[],
+  "salaryLPA": { "min": number, "max": number },
+  "technicalMcqs": [
+    { "q": string, "options": [string, string, string, string], "answer": number, "difficulty": "easy" | "medium" | "hard" }
+  ]
+}
+
+Rules:
+- "must" has 6-8 core/essential skills or knowledge areas for this role, most important first.
+- "nice" has 4-6 skills that strengthen a candidate but aren't mandatory.
+- "advanced" has 3-5 advanced/specialist skills for senior or standout candidates.
+- Skills must be specific and resume-ready (e.g. "Financial Modeling" not "being good with numbers"), and must not repeat across must/nice/advanced.
+- "salaryLPA" is a realistic India entry-to-mid salary range in Lakhs Per Annum, integers, min < max.
+- "technicalMcqs" has exactly 8 questions testing practical/technical knowledge specific to this role. "answer" is the 0-based index of the correct option. Questions must be factually correct and unambiguous, with exactly one right answer. Mix difficulty: roughly 3 easy, 3 medium, 2 hard.
+- If the given title is not a real job/role, still do your best to interpret it as one professionally.
+- Do not include any text outside the JSON object.`;
+
+function isNonEmptyStringArray(value: unknown, min: number, max: number): value is string[] {
+  return Array.isArray(value) && value.length >= min && value.length <= max && value.every((v) => typeof v === 'string' && v.trim().length > 0);
+}
+
+function validateAIPayload(data: unknown): { must: string[]; nice: string[]; advanced: string[]; salaryLPA: { min: number; max: number }; technicalMcqs: AIQuestion[] } | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
+  if (!isNonEmptyStringArray(d.must, 3, 10)) return null;
+  if (!isNonEmptyStringArray(d.nice, 2, 8)) return null;
+  if (!isNonEmptyStringArray(d.advanced, 1, 8)) return null;
+  const salary = d.salaryLPA as { min?: unknown; max?: unknown } | undefined;
+  if (!salary || typeof salary.min !== 'number' || typeof salary.max !== 'number') return null;
+  if (salary.min <= 0 || salary.max <= salary.min || salary.max > 300) return null;
+  if (!Array.isArray(d.technicalMcqs) || d.technicalMcqs.length < 4 || d.technicalMcqs.length > 12) return null;
+  const mcqs: AIQuestion[] = [];
+  for (const raw of d.technicalMcqs) {
+    const q = raw as Record<string, unknown>;
+    if (typeof q.q !== 'string' || !q.q.trim()) return null;
+    if (!Array.isArray(q.options) || q.options.length !== 4 || !q.options.every((o) => typeof o === 'string' && o.trim())) return null;
+    if (typeof q.answer !== 'number' || q.answer < 0 || q.answer > 3 || !Number.isInteger(q.answer)) return null;
+    if (q.difficulty !== 'easy' && q.difficulty !== 'medium' && q.difficulty !== 'hard') return null;
+    mcqs.push({ q: q.q, options: q.options as string[], answer: q.answer, difficulty: q.difficulty });
+  }
+  return {
+    must: d.must as string[],
+    nice: d.nice as string[],
+    advanced: d.advanced as string[],
+    salaryLPA: { min: Math.round(salary.min), max: Math.round(salary.max) },
+    technicalMcqs: mcqs,
+  };
+}
+
+function buildRoadmap(must: string[], nice: string[], advanced: string[]): AIRoadmapItem[] {
+  const withPriority = (skills: string[], priority: RoadmapPriority) =>
+    skills.map((skill) => ({ skill, priority, video: skillVideoLink(skill) }));
+  return [...withPriority(must, 'Must Have'), ...withPriority(nice, 'Nice to Have'), ...withPriority(advanced, 'Advanced')];
+}
+
+const ROLE_TITLE_PATTERN = /^[a-zA-Z0-9&/().,'\- ]{2,80}$/;
+
+// Infers must/nice/advanced skills, a roadmap, a salary range, and a
+// role-specific technical quiz for a target role the student typed that
+// isn't in our curated datasets — persisted in ai_role_cache so any given
+// role title is only ever sent to the AI provider once, ever.
+async function inferRole(request: Request, env: Env): Promise<Response> {
+  const auth = await requireUser(request, env);
+  if ('error' in auth) return auth.error;
+  const { supabaseAdmin } = auth;
+
+  if (!env.ANTHROPIC_API_KEY) {
+    return json({ message: 'AI role lookup is not configured (missing ANTHROPIC_API_KEY secret).' }, 503);
+  }
+
+  let body: { roleTitle?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ message: 'Invalid request body' }, 400);
+  }
+  const roleTitle = typeof body.roleTitle === 'string' ? body.roleTitle.trim() : '';
+  if (!ROLE_TITLE_PATTERN.test(roleTitle)) {
+    return json({ message: 'Role title must be 2-80 characters of letters, numbers, and basic punctuation.' }, 400);
+  }
+  const roleKey = roleTitle.toLowerCase();
+
+  const { data: cached } = await supabaseAdmin
+    .from('ai_role_cache')
+    .select('role_title, must_skills, nice_skills, advanced_skills, salary_min, salary_max, roadmap, technical_mcqs')
+    .eq('role_key', roleKey)
+    .maybeSingle();
+
+  if (cached) {
+    const result: AIRoleData = {
+      role: cached.role_title,
+      must: cached.must_skills,
+      nice: cached.nice_skills,
+      advanced: cached.advanced_skills,
+      salaryLPA: { min: cached.salary_min, max: cached.salary_max },
+      roadmap: cached.roadmap,
+      technicalMcqs: cached.technical_mcqs,
+    };
+    return json(result);
+  }
+
+  let anthropicRes: Response;
+  try {
+    anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 2500,
+        system: AI_ROLE_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: `Job/role title: "${roleTitle}"` }],
+      }),
+    });
+  } catch {
+    return json({ message: 'Failed to reach the AI provider.' }, 502);
+  }
+  if (!anthropicRes.ok) {
+    console.error('[roles/infer] Anthropic API error:', anthropicRes.status, await anthropicRes.text().catch(() => ''));
+    return json({ message: 'AI provider returned an error.' }, 502);
+  }
+
+  const anthropicBody = (await anthropicRes.json()) as { content?: { type: string; text?: string }[] };
+  const rawText = anthropicBody.content?.find((c) => c.type === 'text')?.text || '';
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
+  } catch {
+    return json({ message: 'AI response could not be parsed.' }, 502);
+  }
+
+  const validated = validateAIPayload(parsed);
+  if (!validated) {
+    return json({ message: 'AI response was invalid.' }, 502);
+  }
+
+  const roadmap = buildRoadmap(validated.must, validated.nice, validated.advanced);
+  const result: AIRoleData = {
+    role: roleTitle,
+    must: validated.must,
+    nice: validated.nice,
+    advanced: validated.advanced,
+    salaryLPA: validated.salaryLPA,
+    roadmap,
+    technicalMcqs: validated.technicalMcqs,
+  };
+
+  const { error: insertError } = await supabaseAdmin.from('ai_role_cache').insert({
+    role_key: roleKey,
+    role_title: roleTitle,
+    must_skills: validated.must,
+    nice_skills: validated.nice,
+    advanced_skills: validated.advanced,
+    salary_min: validated.salaryLPA.min,
+    salary_max: validated.salaryLPA.max,
+    roadmap,
+    technical_mcqs: validated.technicalMcqs,
+  });
+  if (insertError) console.error('[roles/infer] Failed to cache AI role data:', insertError.message);
+
+  return json(result);
 }
 
 interface LiveJob {
@@ -173,6 +397,10 @@ export default {
 
     if (url.pathname === '/api/jobs/search' && request.method === 'GET') {
       return searchJobs(request, env);
+    }
+
+    if (url.pathname === '/api/roles/infer' && request.method === 'POST') {
+      return inferRole(request, env);
     }
 
     // Everything else (the SPA, its assets, and the /api/data/* routes that

@@ -18,6 +18,7 @@ import { QUESTIONS, getTechnicalBank, getTechnicalDomain, type Question, type Qu
 import { canAccess, computeProgression, type ModuleId, type ProgressionState } from '@/lib/progression';
 import { getCategoryForRole, getRoleByTitle, getRoleGrowthSkills, getRoleRequiredSkills, getRoleRoadmap, getRolesInCategory, getToolCheck } from '@/lib/pathpilot';
 import { fetchRoadmap, fetchToolCheck, fetchCompanyMatch, fetchCombinedCompanyMatch, fetchLiveJobs, type CompanyMatch, type LiveJob, type ToolCheckItem, type GroupedOptions } from '@/lib/api';
+import { useAIRole, isKnownRole, fetchAIRole } from '@/lib/aiRoleResolver';
 import { fetchExperienceText } from '@/lib/experience';
 import { isValidEmail, isValidPhone, EMAIL_HELP_TEXT, PHONE_HELP_TEXT, parsePhoneValue, formatPhoneValue, sanitizePhoneDigits, checkPasswordStrength, isStrongPassword, PASSWORD_HELP_TEXT } from '@/lib/validation';
 import { COUNTRY_DIAL_CODES } from '@/lib/countries';
@@ -721,10 +722,12 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
 function SalaryCard({ profile, resume, roadmap, roadmapDone, aptitudePassed }: { profile: Profile | null; resume: ResumeAnalysis | null; roadmap: RoadmapSkill[]; roadmapDone: boolean; aptitudePassed: boolean }) {
   const entry = ROLE_SKILLS[ENTRY_LEVEL_ROLE].salaryLPA;
   const beforeAvg = Math.round((entry.min + entry.max) / 2 * 10) / 10;
-  // Rich role dataset (41 roles, incl. specialist tracks) is checked first since
-  // ROLE_SKILLS only curates ~29 — a target role picked via "Other" free text,
-  // like a cybersecurity specialization, is far more likely to be found there.
-  const targetSalary = profile?.target_role ? getRoleByTitle(profile.target_role)?.salaryLPA || ROLE_SKILLS[profile.target_role]?.salaryLPA : undefined;
+  // Rich role dataset (47 roles, incl. specialist tracks) is checked next since
+  // ROLE_SKILLS only curates ~35 — and if a target role picked via "Other" free
+  // text matches neither, the AI-inferred salary (see aiRoleResolver.ts) fills
+  // the gap instead of silently showing nothing.
+  const { data: aiRole } = useAIRole(profile?.target_role);
+  const targetSalary = profile?.target_role ? getRoleByTitle(profile.target_role)?.salaryLPA || ROLE_SKILLS[profile.target_role]?.salaryLPA || aiRole?.salaryLPA : undefined;
   const bestMatch = resume?.job_roles?.[0];
   const qualified = roadmapDone && aptitudePassed && Boolean(targetSalary);
 
@@ -817,8 +820,8 @@ function MetricCard({ label, value, suffix, icon: Icon, color, onClick }: { labe
 // unfinished skills sitting in the table forever, permanently failing
 // "roadmap complete" even though the current role's roadmap shows 100%.
 // Drop anything that isn't part of the current role's skill set to keep it scoped.
-async function pruneStaleRoadmapSkills(userId: string, role: string) {
-  const required = getRoleRequiredSkills(role);
+async function pruneStaleRoadmapSkills(userId: string, requiredSkills: string[]) {
+  const required = requiredSkills;
   if (!required.length) return;
   const keep = new Set(required.map((s) => s.toLowerCase()));
   const { data } = await supabase.from('roadmap_skills').select('skill_name').eq('user_id', userId);
@@ -861,7 +864,9 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
     // Aptitude/Compare unlocked on stale progress. Reset first, so the
     // roadmap (and everything gated behind it) has to be earned again.
     await supabase.from('roadmap_skills').delete().eq('user_id', userId);
-    const roadmapItems = await fetchRoadmap(role, skills).then((res) => res.roadmap).catch(() => getRoleRoadmap(role, skills));
+    const roadmapItems = isKnownRole(role)
+      ? await fetchRoadmap(role, skills).then((res) => res.roadmap).catch(() => getRoleRoadmap(role, skills))
+      : (await fetchAIRole(role))?.roadmap || getRoleRoadmap(role, skills);
     const rows = roadmapItems.map((item) => ({ user_id: userId, skill_name: item.skill, priority: item.priority || 'Must Have' }));
     if (rows.length) {
       const { error } = await supabase.from('roadmap_skills').upsert(rows, { onConflict: 'user_id,skill_name' });
@@ -880,7 +885,17 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
 function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalysis; round: number; onReset: () => void; go: (module: Module) => void }) {
   const { user, profile, updateProfile } = useAuth();
   const targetRole = profile?.target_role || analysis.job_roles[0]?.role || 'Full Stack Developer';
-  const missing = useMemo(() => getMissingSkills(analysis.skills, targetRole), [analysis.skills, targetRole]);
+  // For a role typed via "Other" that isn't in our curated datasets, the AI
+  // lookup (aiRoleResolver.ts) supplies real skills instead of silently
+  // falling back to Full Stack Developer's generic ones.
+  const { data: aiRole } = useAIRole(targetRole);
+  const missing = useMemo(() => {
+    if (aiRole) {
+      const has = (s: string) => analysis.skills.some((d) => d.toLowerCase() === s.toLowerCase());
+      return aiRole.roadmap.filter((item) => !has(item.skill)).map((item) => ({ skill: item.skill, priority: item.priority, link: item.video }));
+    }
+    return getMissingSkills(analysis.skills, targetRole);
+  }, [analysis.skills, targetRole, aiRole]);
   // Once a target role is set, "roles that fit" should stay in that lane —
   // unfiltered, it ranks across all 40 roles by raw skill overlap, which can
   // surface something like Game Developer for someone targeting Cybersecurity
@@ -1020,21 +1035,27 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
   const { user, profile } = useAuth();
   const [skills, setSkills] = useState<Array<RoadmapSkill & { video?: string }>>([]);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatch[]>([]);
+  const role = profile?.target_role || 'Full Stack Developer';
+  // For a role typed via "Other" that isn't in our curated datasets, the AI
+  // lookup (aiRoleResolver.ts) supplies real must/nice/advanced skills and a
+  // matching roadmap instead of silently defaulting to Full Stack Developer's.
+  const { data: aiRole, loading: aiLoading } = useAIRole(role);
 
   useEffect(() => {
     if (!user) return;
-    const role = profile?.target_role || 'Full Stack Developer';
+    if (aiLoading) { setSkills([]); return; }
     const knownSkills = profile?.saved_skills || [];
-    const apply = async (roadmapItems: Array<{ skill: string; video: string; priority?: 'Must Have' | 'Nice to Have' | 'Advanced' }>) => {
-      await pruneStaleRoadmapSkills(user.id, role);
+    const apply = async (roadmapItems: Array<{ skill: string; video: string; priority?: 'Must Have' | 'Nice to Have' | 'Advanced' }>, requiredSkills: string[]) => {
+      await pruneStaleRoadmapSkills(user.id, requiredSkills);
       const { data: existingRows } = await supabase.from('roadmap_skills').select('skill_name, done').eq('user_id', user.id);
       const doneMap = new Map((existingRows || []).map((r: { skill_name: string; done: boolean }) => [r.skill_name, r.done]));
 
       // Once every current-tier item is checked off, unlock the role's growth
       // tier so the roadmap has somewhere to go instead of sitting at "done"
-      // forever — this is what "Grow further" actually surfaces.
+      // forever — this is what "Grow further" actually surfaces. AI-inferred
+      // roles have no separate growth tier, so this stays base-only for them.
       const baseAllDone = roadmapItems.length > 0 && roadmapItems.every((item) => doneMap.get(item.skill));
-      const growthItems = baseAllDone ? getRoleGrowthSkills(role, knownSkills) : [];
+      const growthItems = (!aiRole && baseAllDone) ? getRoleGrowthSkills(role, knownSkills) : [];
       const combined = [
         ...roadmapItems.map((item) => ({ ...item, tier: 'base' as const })),
         ...growthItems.map((item) => ({ ...item, priority: 'Advanced' as const, tier: 'growth' as const })),
@@ -1049,10 +1070,15 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
       })));
       onProgress?.();
     };
+
+    if (aiRole) {
+      apply(aiRole.roadmap, [...aiRole.must, ...aiRole.nice, ...aiRole.advanced]);
+      return;
+    }
     fetchRoadmap(role, knownSkills)
-      .then((res) => apply(res.roadmap))
-      .catch(() => apply(getRoleRoadmap(role, knownSkills)));
-  }, [user, profile?.target_role, profile?.saved_skills, onProgress]);
+      .then((res) => apply(res.roadmap, getRoleRequiredSkills(role)))
+      .catch(() => apply(getRoleRoadmap(role, knownSkills), getRoleRequiredSkills(role)));
+  }, [user, role, profile?.saved_skills, onProgress, aiRole, aiLoading]);
 
   useEffect(() => {
     if (!user) return;
@@ -1087,7 +1113,7 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
     onProgress?.();
   }
 
-  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {profile?.target_role || 'Full Stack Developer'}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">Preparing your personalized roadmap…</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong></div><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>)}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div><div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
+  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {role}{aiRole && <span className="ai-badge">AI-matched</span>}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">{aiLoading ? `Looking up skills for "${role}" with AI…` : 'Preparing your personalized roadmap…'}</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong></div><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>)}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div><div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
 }
 
 const questions = QUESTIONS;
@@ -1136,9 +1162,14 @@ function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProg
   // "Technical MCQs" stays the stored category key everywhere (results,
   // radar chart, dashboard) so progress tracking keeps working across role
   // changes — only which question bank feeds it changes with the target role.
-  const technicalDomain = getTechnicalDomain(profile?.target_role);
+  // A role typed via "Other" that isn't in our curated datasets gets its own
+  // AI-generated quiz (aiRoleResolver.ts) instead of a guessed domain's bank.
+  const { data: aiRole } = useAIRole(profile?.target_role);
+  const technicalDomain = aiRole ? profile?.target_role : getTechnicalDomain(profile?.target_role);
   function bankFor(cat: string): Question[] {
-    return cat === 'Technical MCQs' ? getTechnicalBank(profile?.target_role) : questions[cat];
+    if (cat !== 'Technical MCQs') return questions[cat];
+    if (aiRole?.technicalMcqs?.length) return aiRole.technicalMcqs;
+    return getTechnicalBank(profile?.target_role);
   }
 
   useEffect(() => { if (user) supabase.from('aptitude_results').select('*').eq('user_id', user.id).then(({ data }) => setResults((data || []) as AptitudeResult[])); }, [user]);
