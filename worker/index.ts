@@ -223,82 +223,86 @@ async function inferRole(request: Request, env: Env): Promise<Response> {
   }
   const roleKey = roleTitle.toLowerCase();
 
-  const { data: cached } = await supabaseAdmin
-    .from('ai_role_cache')
-    .select('role_title, must_skills, nice_skills, advanced_skills, salary_min, salary_max, roadmap, technical_mcqs')
-    .eq('role_key', roleKey)
-    .maybeSingle();
-
-  if (cached) {
-    const result: AIRoleData = {
-      role: cached.role_title,
-      must: cached.must_skills,
-      nice: cached.nice_skills,
-      advanced: cached.advanced_skills,
-      salaryLPA: { min: cached.salary_min, max: cached.salary_max },
-      roadmap: cached.roadmap,
-      technicalMcqs: cached.technical_mcqs,
-    };
-    return json(result);
-  }
-
-  // Cloudflare Workers AI — free tier (10,000 requests/day on the account's
-  // free allocation), no separate API key/billing needed since it runs on
-  // the same Cloudflare account as this Worker.
-  const WORKERS_AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-  let aiResult: { response?: string };
+  // Everything past this point touches the AI binding and its response
+  // shape, which isn't fully within our control — caught broadly so a bad
+  // model response or transient binding failure returns a clean error
+  // instead of an opaque Cloudflare 1101 page.
   try {
-    aiResult = await ai.run(WORKERS_AI_MODEL, {
+    const { data: cached } = await supabaseAdmin
+      .from('ai_role_cache')
+      .select('role_title, must_skills, nice_skills, advanced_skills, salary_min, salary_max, roadmap, technical_mcqs')
+      .eq('role_key', roleKey)
+      .maybeSingle();
+
+    if (cached) {
+      const result: AIRoleData = {
+        role: cached.role_title,
+        must: cached.must_skills,
+        nice: cached.nice_skills,
+        advanced: cached.advanced_skills,
+        salaryLPA: { min: cached.salary_min, max: cached.salary_max },
+        roadmap: cached.roadmap,
+        technicalMcqs: cached.technical_mcqs,
+      };
+      return json(result);
+    }
+
+    // Cloudflare Workers AI — free tier (10,000 requests/day on the account's
+    // free allocation), no separate API key/billing needed since it runs on
+    // the same Cloudflare account as this Worker.
+    const WORKERS_AI_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+    const aiResult = await ai.run(WORKERS_AI_MODEL, {
       messages: [
         { role: 'system', content: AI_ROLE_SYSTEM_PROMPT },
         { role: 'user', content: `Job/role title: "${roleTitle}"` },
       ],
       max_tokens: 2500,
     });
+
+    const rawText = aiResult.response || '';
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
+    } catch {
+      return json({ message: 'AI response could not be parsed.' }, 502);
+    }
+
+    const validated = validateAIPayload(parsed);
+    if (!validated) {
+      return json({ message: 'AI response was invalid.' }, 502);
+    }
+
+    const roadmap = buildRoadmap(validated.must, validated.nice, validated.advanced);
+    const result: AIRoleData = {
+      role: roleTitle,
+      must: validated.must,
+      nice: validated.nice,
+      advanced: validated.advanced,
+      salaryLPA: validated.salaryLPA,
+      roadmap,
+      technicalMcqs: validated.technicalMcqs,
+    };
+
+    const { error: insertError } = await supabaseAdmin.from('ai_role_cache').insert({
+      role_key: roleKey,
+      role_title: roleTitle,
+      must_skills: validated.must,
+      nice_skills: validated.nice,
+      advanced_skills: validated.advanced,
+      salary_min: validated.salaryLPA.min,
+      salary_max: validated.salaryLPA.max,
+      roadmap,
+      technical_mcqs: validated.technicalMcqs,
+    });
+    if (insertError) console.error('[roles/infer] Failed to cache AI role data:', insertError.message);
+
+    return json(result);
   } catch (err) {
-    console.error('[roles/infer] Workers AI error:', err instanceof Error ? err.message : String(err));
-    return json({ message: 'AI provider returned an error.' }, 502);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[roles/infer] Unhandled error:', message);
+    return json({ message: `AI role lookup failed: ${message}` }, 502);
   }
-
-  const rawText = aiResult.response || '';
-  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
-  } catch {
-    return json({ message: 'AI response could not be parsed.' }, 502);
-  }
-
-  const validated = validateAIPayload(parsed);
-  if (!validated) {
-    return json({ message: 'AI response was invalid.' }, 502);
-  }
-
-  const roadmap = buildRoadmap(validated.must, validated.nice, validated.advanced);
-  const result: AIRoleData = {
-    role: roleTitle,
-    must: validated.must,
-    nice: validated.nice,
-    advanced: validated.advanced,
-    salaryLPA: validated.salaryLPA,
-    roadmap,
-    technicalMcqs: validated.technicalMcqs,
-  };
-
-  const { error: insertError } = await supabaseAdmin.from('ai_role_cache').insert({
-    role_key: roleKey,
-    role_title: roleTitle,
-    must_skills: validated.must,
-    nice_skills: validated.nice,
-    advanced_skills: validated.advanced,
-    salary_min: validated.salaryLPA.min,
-    salary_max: validated.salaryLPA.max,
-    roadmap,
-    technical_mcqs: validated.technicalMcqs,
-  });
-  if (insertError) console.error('[roles/infer] Failed to cache AI role data:', insertError.message);
-
-  return json(result);
 }
 
 interface LiveJob {
