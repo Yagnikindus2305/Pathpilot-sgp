@@ -914,6 +914,17 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
   const { user, profile, updateProfile } = useAuth();
   const targetRole = profile?.target_role || analysis.job_roles[0]?.role || 'Full Stack Developer';
   const missing = useMemo(() => getMissingSkills(analysis.skills, targetRole), [analysis.skills, targetRole]);
+  // Once a target role is set, "roles that fit" should stay in that lane —
+  // unfiltered, it ranks across all 40 roles by raw skill overlap, which can
+  // surface something like Game Developer for someone targeting Cybersecurity
+  // Analyst just because a couple of generic skills happen to overlap.
+  const relevantJobRoles = useMemo(() => {
+    if (!profile?.target_role) return analysis.job_roles;
+    const category = getCategoryForRole(profile.target_role);
+    if (!category) return analysis.job_roles;
+    const filtered = analysis.job_roles.filter((r) => getCategoryForRole(r.role) === category);
+    return filtered.length >= 3 ? filtered : analysis.job_roles;
+  }, [analysis.job_roles, profile?.target_role]);
   const [toolCoverage, setToolCoverage] = useState<ToolCheckItem[]>([]);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatch[]>([]);
   const [appliedKeys, setAppliedKeys] = useState<string[]>([]);
@@ -981,7 +992,7 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
     <div className="content-card roles-card">
       <SectionTitle icon={Target} title="Matched Job Roles" action={<span className="muted-label">Based on your detected skills</span>} />
       <div className="matched-roles-grid">
-        {analysis.job_roles.slice(0, 6).map((role) => {
+        {relevantJobRoles.slice(0, 6).map((role) => {
           const req = ROLE_SKILLS[role.role];
           const allReq = req ? [...req.must, ...req.nice, ...req.advanced] : [];
           const owned = allReq.filter((skill) => analysis.skills.includes(skill));
@@ -995,8 +1006,8 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
             </div>
             <div className="matched-role-salary">₹{role.salary_min}–{role.salary_max} LPA</div>
             <div className={`match-track ${level}`}><div style={{ width: `${role.match}%` }} /></div>
-            {owned.length > 0 && <div><span className="matched-role-skills-label">You have</span><div className="tag-cloud">{owned.slice(0, 5).map((skill) => <SkillTag green key={skill}>{skill}</SkillTag>)}</div></div>}
-            {missingForRole.length > 0 && <div><span className="matched-role-skills-label missing">Missing</span><div className="tag-cloud">{missingForRole.slice(0, 5).map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>)}</div></div>}
+            {owned.length > 0 && <div><span className="matched-role-skills-label">You have ({owned.length})</span><div className="tag-cloud">{owned.slice(0, 5).map((skill) => <SkillTag green key={skill}>{skill}</SkillTag>)}{owned.length > 5 && <span className="muted-label">+{owned.length - 5} more</span>}</div></div>}
+            {missingForRole.length > 0 && <div><span className="matched-role-skills-label missing">Missing ({missingForRole.length})</span><div className="tag-cloud">{missingForRole.slice(0, 5).map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>)}{missingForRole.length > 5 && <span className="muted-label">+{missingForRole.length - 5} more</span>}</div></div>}
             <button type="button" className="primary-btn full" onClick={async () => { await updateProfile({ target_role: role.role }); go('roadmap'); }}><Target size={15} /> Set as Target &amp; View Roadmap</button>
           </div>;
         })}
@@ -1240,7 +1251,17 @@ function ResumeDrop({ label, file, setFile }: { label: string; file: File | null
 function CompareResult({ result, roadmap, reset, profile, go }: { result: { old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> }; roadmap: RoadmapSkill[]; reset: () => void; profile: Profile | null; go: (module: Module) => void }) {
   const { user } = useAuth();
   const gained = result.next.skills.filter((s) => !result.old.skills.includes(s));
-  const roles = result.next.jobRoles.filter((r) => !result.old.jobRoles.some((x) => x.role === r.role));
+  const unlockedRoles = result.next.jobRoles.filter((r) => !result.old.jobRoles.some((x) => x.role === r.role));
+  // Same fix as Resume Analysis's Matched Job Roles: once a target role is
+  // set, stay in that lane instead of surfacing an unrelated role just
+  // because it crossed the 20% match threshold on this resume.
+  const roles = useMemo(() => {
+    if (!profile?.target_role) return unlockedRoles;
+    const category = getCategoryForRole(profile.target_role);
+    if (!category) return unlockedRoles;
+    const filtered = unlockedRoles.filter((r) => getCategoryForRole(r.role) === category);
+    return filtered.length > 0 ? filtered : unlockedRoles;
+  }, [unlockedRoles, profile?.target_role]);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatch[]>([]);
   const [appliedKeys, setAppliedKeys] = useState<string[]>([]);
   const targetRoles = useMemo(
