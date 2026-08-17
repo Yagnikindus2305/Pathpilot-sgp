@@ -5,6 +5,37 @@ export interface GroupedOptions {
   [category: string]: string[];
 }
 
+export interface LiveJob {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  description: string;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  applyUrl: string;
+  created: string;
+}
+
+// Real, current job postings via the Worker's Adzuna proxy (worker/index.ts) —
+// unlike the static role/company datasets, this reflects thousands of live
+// openings rather than a hand-authored list. Returns an empty array (not an
+// error) whenever the feature isn't configured yet or the request fails, so
+// callers can just check length rather than handle a separate error state.
+export async function fetchLiveJobs(what: string, where?: string): Promise<LiveJob[]> {
+  if (!what) return [];
+  try {
+    const params = new URLSearchParams({ what });
+    if (where) params.set('where', where);
+    const res = await fetch(`/api/jobs/search?${params.toString()}`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { jobs?: LiveJob[] };
+    return data.jobs || [];
+  } catch {
+    return [];
+  }
+}
+
 export interface RoadmapItem {
   skill: string;
   video: string;

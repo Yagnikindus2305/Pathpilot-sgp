@@ -17,7 +17,7 @@ import { buildJobSearchUrl, getApplications, recordApplication, updateApplicatio
 import { QUESTIONS, getTechnicalBank, getTechnicalDomain, type Question, type QuestionDifficulty } from '@/lib/questions';
 import { canAccess, computeProgression, type ModuleId, type ProgressionState } from '@/lib/progression';
 import { getCategoryForRole, getRoleByTitle, getRoleGrowthSkills, getRoleRequiredSkills, getRoleRoadmap, getRolesInCategory, getToolCheck } from '@/lib/pathpilot';
-import { fetchRoadmap, fetchToolCheck, fetchCompanyMatch, fetchCombinedCompanyMatch, fetchInternshipMatch, fetchCombinedInternshipMatch, type CompanyMatch, type InternshipMatch, type ToolCheckItem, type GroupedOptions } from '@/lib/api';
+import { fetchRoadmap, fetchToolCheck, fetchCompanyMatch, fetchCombinedCompanyMatch, fetchInternshipMatch, fetchCombinedInternshipMatch, fetchLiveJobs, type CompanyMatch, type InternshipMatch, type LiveJob, type ToolCheckItem, type GroupedOptions } from '@/lib/api';
 import { fetchExperienceText } from '@/lib/experience';
 import { isValidEmail, isValidPhone, EMAIL_HELP_TEXT, PHONE_HELP_TEXT, parsePhoneValue, formatPhoneValue, sanitizePhoneDigits, checkPasswordStrength, isStrongPassword, PASSWORD_HELP_TEXT } from '@/lib/validation';
 import { COUNTRY_DIAL_CODES } from '@/lib/countries';
@@ -613,6 +613,53 @@ function InternshipsCard({ skills, targetRoles, appliedKeys, onApply }: { skills
   </div>;
 }
 
+function formatSalaryRange(min: number | null, max: number | null): string {
+  if (!min && !max) return 'Salary not listed';
+  const fmt = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+  if (min && max) return `${fmt(min)}–${fmt(max)}`;
+  return fmt((min || max) as number);
+}
+
+// Real, current postings via the Worker's Adzuna proxy — unlike every other
+// "roles you can target" card in this app, this isn't bounded by a
+// hand-authored dataset, so it's the answer to "thousands of jobs, not 40-50."
+// Renders nothing at all if the feature isn't configured or returns no results,
+// so an unset API key never shows a broken section on the dashboard.
+function LiveJobsCard({ role, location }: { role?: string; location?: string }) {
+  const { user } = useAuth();
+  const [jobs, setJobs] = useState<LiveJob[]>([]);
+  const [appliedKeys, setAppliedKeys] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!role) { setJobs([]); return; }
+    let cancelled = false;
+    fetchLiveJobs(role, location).then((res) => { if (!cancelled) setJobs(res); });
+    return () => { cancelled = true; };
+  }, [role, location]);
+
+  useEffect(() => { if (user) getApplications(user.id).then((apps) => setAppliedKeys(apps.map((a) => `${a.company}::${a.role}`))); }, [user]);
+
+  async function apply(job: LiveJob) {
+    if (!user) return;
+    setAppliedKeys((prev) => Array.from(new Set([...prev, `${job.company}::${job.title}`])));
+    await recordApplication(user.id, job.company, job.title, job.applyUrl || '#');
+    if (job.applyUrl) window.open(job.applyUrl, '_blank', 'noopener');
+  }
+
+  if (!jobs.length) return null;
+  return <div className="content-card company-match-card">
+    <SectionTitle icon={BriefcaseBusiness} title="Live job openings" action={<span className="muted-label">Real postings, updated continuously</span>} />
+    <p className="missing-intro">Sourced from live listings for "{role}"{location ? ` near ${location}` : ''} — apply directly, nothing here is a static list.</p>
+    <div className="roles-list">
+      {jobs.slice(0, 10).map((job) => { const applied = appliedKeys.includes(`${job.company}::${job.title}`); return <div className="role-row" key={job.id}>
+        <div className="role-info"><strong>{job.title}</strong><div className="role-meta"><span>{job.company}</span>{job.location && <span>{job.location}</span>}</div></div>
+        <div className="role-salary"><small>{formatSalaryRange(job.salaryMin, job.salaryMax)}</small></div>
+        <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(job)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button>
+      </div>; })}
+    </div>
+  </div>;
+}
+
 const APTITUDE_CATEGORIES = ['Quantitative', 'Logical Reasoning', 'Verbal Ability', 'Technical MCQs'];
 
 // Only the best attempt per category counts — retaking a weak category
@@ -674,7 +721,7 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   const nextLabel = readyForNextRound ? 'Grow further' : 'Continue building';
   const nextHeadline = readyForNextRound ? 'Your path is taking shape.' : `${skillsRemaining} skill video${skillsRemaining === 1 ? '' : 's'} left to close the gap.`;
   const nextSubCopy = readyForNextRound ? 'Re-analyze your resume to surface new missing skills and start a tougher round.' : 'Every skill you build is a step closer to the role you want.';
-  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Last 6 months</span>} /><div className="chart-area"><div className="y-axis"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div><div className="bars">{['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].map((month, i) => <div className="bar-column" key={month}><div className="bar-track"><div className="bar-fill" style={{ height: `${[24, 32, 45, 52, 68, Math.max(68, Math.min(94, 68 + skillsGained * 5))][i]}%` }} /></div><span>{month}</span></div>)}</div></div><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{skillsGained} skills this journey</strong></div>{gainedSkillNames.length > 0 && <div className="tag-cloud growth-skills-list">{gainedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>)}</div>}</div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
+  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} /><LiveJobsCard role={profile?.target_role} location={profile?.city || profile?.state} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Last 6 months</span>} /><div className="chart-area"><div className="y-axis"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div><div className="bars">{['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].map((month, i) => <div className="bar-column" key={month}><div className="bar-track"><div className="bar-fill" style={{ height: `${[24, 32, 45, 52, 68, Math.max(68, Math.min(94, 68 + skillsGained * 5))][i]}%` }} /></div><span>{month}</span></div>)}</div></div><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{skillsGained} skills this journey</strong></div>{gainedSkillNames.length > 0 && <div className="tag-cloud growth-skills-list">{gainedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>)}</div>}</div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
 }
 
 function SalaryCard({ profile, resume, roadmap, roadmapDone, aptitudePassed }: { profile: Profile | null; resume: ResumeAnalysis | null; roadmap: RoadmapSkill[]; roadmapDone: boolean; aptitudePassed: boolean }) {

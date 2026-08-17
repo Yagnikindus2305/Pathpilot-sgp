@@ -4,6 +4,8 @@ export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
+  ADZUNA_APP_ID?: string;
+  ADZUNA_APP_KEY?: string;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -73,6 +75,93 @@ async function deleteUser(request: Request, env: Env, targetId: string): Promise
   return json({ ok: true });
 }
 
+interface LiveJob {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  description: string;
+  salaryMin: number | null;
+  salaryMax: number | null;
+  applyUrl: string;
+  created: string;
+}
+
+interface AdzunaRawJob {
+  id?: string | number;
+  title?: string;
+  company?: { display_name?: string };
+  location?: { display_name?: string };
+  description?: string;
+  salary_min?: number;
+  salary_max?: number;
+  redirect_url?: string;
+  created?: string;
+}
+
+const ADZUNA_BASE_URL = 'https://api.adzuna.com/v1/api/jobs';
+
+// Proxies Adzuna's public job-search API (https://api.adzuna.com) so real,
+// current job postings can be searched by role/location instead of relying
+// on a hand-authored static role list. The app_key stays server-side here
+// (a Worker secret), never shipped in the browser bundle. Responses are
+// cached for 15 minutes via the Cache API to stay well within Adzuna's
+// free-tier rate limit — no Redis needed at this scale.
+async function searchJobs(request: Request, env: Env): Promise<Response> {
+  if (!env.ADZUNA_APP_ID || !env.ADZUNA_APP_KEY) {
+    return json({ message: 'Live job search is not configured (missing ADZUNA_APP_ID/ADZUNA_APP_KEY secrets).' }, 503);
+  }
+
+  const url = new URL(request.url);
+  const what = url.searchParams.get('what') || '';
+  const where = url.searchParams.get('where') || '';
+  const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1);
+  const country = (url.searchParams.get('country') || 'in').toLowerCase();
+
+  const cache = (caches as unknown as { default: Cache }).default;
+  const cacheKey = new Request(url.toString(), { method: 'GET' });
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
+  const qs = new URLSearchParams({
+    app_id: env.ADZUNA_APP_ID,
+    app_key: env.ADZUNA_APP_KEY,
+    results_per_page: '15',
+  });
+  if (what) qs.set('what', what);
+  if (where) qs.set('where', where);
+
+  const adzunaUrl = `${ADZUNA_BASE_URL}/${country}/search/${page}?${qs.toString()}`;
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(adzunaUrl, { headers: { Accept: 'application/json' } });
+  } catch {
+    return json({ message: 'Failed to reach the job search provider.' }, 502);
+  }
+  if (!upstream.ok) {
+    return json({ message: `Job search provider returned ${upstream.status}.` }, 502);
+  }
+
+  const data = (await upstream.json()) as { results?: AdzunaRawJob[] };
+  const jobs: LiveJob[] = (data.results || []).map((r) => ({
+    id: String(r.id ?? ''),
+    title: r.title || 'Untitled role',
+    company: r.company?.display_name || 'Unknown company',
+    location: r.location?.display_name || '',
+    description: (r.description || '').slice(0, 400),
+    salaryMin: typeof r.salary_min === 'number' ? Math.round(r.salary_min) : null,
+    salaryMax: typeof r.salary_max === 'number' ? Math.round(r.salary_max) : null,
+    applyUrl: r.redirect_url || '',
+    created: r.created || '',
+  }));
+
+  const response = json({ jobs });
+  response.headers.set('Cache-Control', 'public, max-age=900');
+  await cache.put(cacheKey, response.clone());
+  return response;
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -80,6 +169,10 @@ export default {
     const deleteMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (deleteMatch && request.method === 'DELETE') {
       return deleteUser(request, env, deleteMatch[1]);
+    }
+
+    if (url.pathname === '/api/jobs/search' && request.method === 'GET') {
+      return searchJobs(request, env);
     }
 
     // Everything else (the SPA, its assets, and the /api/data/* routes that
