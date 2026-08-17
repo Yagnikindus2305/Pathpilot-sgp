@@ -17,7 +17,7 @@ import { buildJobSearchUrl, getApplications, recordApplication, updateApplicatio
 import { QUESTIONS, getTechnicalBank, getTechnicalDomain, type Question, type QuestionDifficulty } from '@/lib/questions';
 import { canAccess, computeProgression, type ModuleId, type ProgressionState } from '@/lib/progression';
 import { getCategoryForRole, getRoleByTitle, getRoleGrowthSkills, getRoleRequiredSkills, getRoleRoadmap, getRolesInCategory, getToolCheck } from '@/lib/pathpilot';
-import { fetchRoadmap, fetchToolCheck, fetchCompanyMatch, fetchCombinedCompanyMatch, fetchInternshipMatch, fetchCombinedInternshipMatch, fetchLiveJobs, type CompanyMatch, type InternshipMatch, type LiveJob, type ToolCheckItem, type GroupedOptions } from '@/lib/api';
+import { fetchRoadmap, fetchToolCheck, fetchCompanyMatch, fetchCombinedCompanyMatch, fetchLiveJobs, type CompanyMatch, type LiveJob, type ToolCheckItem, type GroupedOptions } from '@/lib/api';
 import { fetchExperienceText } from '@/lib/experience';
 import { isValidEmail, isValidPhone, EMAIL_HELP_TEXT, PHONE_HELP_TEXT, parsePhoneValue, formatPhoneValue, sanitizePhoneDigits, checkPasswordStrength, isStrongPassword, PASSWORD_HELP_TEXT } from '@/lib/validation';
 import { COUNTRY_DIAL_CODES } from '@/lib/countries';
@@ -594,39 +594,6 @@ function matchLevel(pct: number): 'good' | 'fair' | 'low' {
   return 'low';
 }
 
-// Shared across Resume Analysis and Resume Compare — Roadmap uses its own
-// lighter pill-grid version since it doesn't track applications the same way.
-function InternshipsCard({ skills, targetRoles, appliedKeys, onApply }: { skills: string[]; targetRoles: string[]; appliedKeys: string[]; onApply: (company: string, role: string) => void }) {
-  const [internships, setInternships] = useState<InternshipMatch[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchCombinedInternshipMatch(skills, targetRoles)
-      .then((res) => { if (!cancelled) setInternships(res.internships); })
-      .catch(() => { if (!cancelled) setInternships([]); });
-    return () => { cancelled = true; };
-  }, [skills, targetRoles]);
-
-  if (!internships.length) return null;
-  return <div className="content-card company-match-card">
-    <SectionTitle icon={GraduationCap} title="Internships you can target" action={<span className="muted-label">Great for building experience while studying</span>} />
-    <p className="missing-intro">Stipend shown is a typical monthly range for that company's tier — apply broadly, even below 100% match.</p>
-    <div className="roles-list">
-      {internships.map((c, index) => { const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`); const canApply = index < 2; return <div className="role-row" key={c.company}>
-        <div className="role-rank">{c.bestMatch.matchPct}%</div>
-        <div className="role-info"><strong>{c.company}</strong><div className="role-meta"><span>{c.bestMatch.role}</span><TierBadge tier={c.tier} /></div></div>
-        <div className="match-track"><div style={{ width: `${c.bestMatch.matchPct}%` }} /></div>
-        <div className="role-salary"><small>{c.stipendBand}</small></div>
-        <div className="role-skill-snippets">
-          {c.bestMatch.have.slice(0, 3).map((skill) => <SkillTag key={skill}>{skill}</SkillTag>)}
-          {c.bestMatch.missing.length > 0 && <span className="role-skill-missing">missing {c.bestMatch.missing.slice(0, 3).join(', ')}{c.bestMatch.missing.length > 3 ? '…' : ''}</span>}
-        </div>
-        {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => onApply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> : <span className="muted-label">Close the gap first</span>}
-      </div>; })}
-    </div>
-  </div>;
-}
-
 function formatSalaryRange(min: number | null, max: number | null): string {
   if (!min && !max) return 'Salary not listed';
   const fmt = (n: number) => `₹${n.toLocaleString('en-IN')}`;
@@ -1045,7 +1012,6 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
         </div>; })}
       </div>
     </div>}
-    <InternshipsCard skills={analysis.skills} targetRoles={[targetRole, ...(profile?.target_roles || [])]} appliedKeys={appliedKeys} onApply={apply} />
     <div className="next-banner"><div className="banner-icon"><Target size={20} /></div><div><strong>Know your gaps? Time to close them.</strong><p>Head to your skill roadmap to see exactly what to learn next, with a video for each skill.</p></div><button onClick={() => go('roadmap')}>Go to Skill Roadmap <ArrowRight size={16} /></button></div>
   </>;
 }
@@ -1054,7 +1020,6 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
   const { user, profile } = useAuth();
   const [skills, setSkills] = useState<Array<RoadmapSkill & { video?: string }>>([]);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatch[]>([]);
-  const [internshipMatches, setInternshipMatches] = useState<InternshipMatch[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -1100,9 +1065,6 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
     fetchCompanyMatch(combinedSkills, profile?.target_role)
       .then((res) => { if (!cancelled) setCompanyMatches(res.companies); })
       .catch(() => { if (!cancelled) setCompanyMatches([]); });
-    fetchInternshipMatch(combinedSkills, profile?.target_role)
-      .then((res) => { if (!cancelled) setInternshipMatches(res.internships); })
-      .catch(() => { if (!cancelled) setInternshipMatches([]); });
     return () => { cancelled = true; };
   }, [user, profile?.saved_skills, profile?.target_role, skills]);
 
@@ -1125,7 +1087,7 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
     onProgress?.();
   }
 
-  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {profile?.target_role || 'Full Stack Developer'}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">Preparing your personalized roadmap…</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong></div><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>)}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div>{internshipMatches.length > 0 && <div className="content-card company-card"><SectionTitle icon={GraduationCap} title="Internships you can target" action={<span className="muted-label">Great for building experience while studying</span>} /><p className="company-card-copy">Same skill match, sized for internship-level expectations — apply broadly, even below 100% match.</p><div className="company-grid">{internshipMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.stipendBand}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div></div>}<div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
+  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {profile?.target_role || 'Full Stack Developer'}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">Preparing your personalized roadmap…</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong></div><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>)}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div><div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
 }
 
 const questions = QUESTIONS;
@@ -1322,7 +1284,6 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
         </div>; })}
       </div>
     </div>}
-    <InternshipsCard skills={skillsWithRoadmap} targetRoles={targetRoles} appliedKeys={appliedKeys} onApply={apply} />
     <div className="next-banner"><div className="banner-icon"><LayoutDashboard size={20} /></div><div><strong>You're all caught up here.</strong><p>Head to your dashboard to see this progress reflected everywhere.</p></div><button onClick={() => go('dashboard')}>Continue to Dashboard <ArrowRight size={16} /></button></div>
   </>;
 }
