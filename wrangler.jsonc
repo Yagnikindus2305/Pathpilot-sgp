@@ -7,6 +7,9 @@
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
+  "ai": {
+    "binding": "AI"
+  },
   "vars": {
     // Plain project URL, not a secret — already public in the frontend bundle.
     // SUPABASE_SERVICE_ROLE_KEY is NOT here: it must be added as an encrypted

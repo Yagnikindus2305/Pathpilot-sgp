@@ -1,12 +1,20 @@
 import { createClient } from '@supabase/supabase-js';
 
+// Minimal shape of Cloudflare's Workers AI binding — kept local rather than
+// pulling in @cloudflare/workers-types just for this one method, matching
+// how this file already hand-types other Workers-only globals (e.g. `caches`
+// below in searchJobs).
+interface WorkersAIBinding {
+  run(model: string, input: { messages: { role: string; content: string }[]; max_tokens?: number }): Promise<{ response?: string }>;
+}
+
 export interface Env {
   ASSETS: { fetch: (request: Request) => Promise<Response> };
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   ADZUNA_APP_ID?: string;
   ADZUNA_APP_KEY?: string;
-  ANTHROPIC_API_KEY?: string;
+  AI?: WorkersAIBinding;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -198,9 +206,10 @@ async function inferRole(request: Request, env: Env): Promise<Response> {
   if ('error' in auth) return auth.error;
   const { supabaseAdmin } = auth;
 
-  if (!env.ANTHROPIC_API_KEY) {
-    return json({ message: 'AI role lookup is not configured (missing ANTHROPIC_API_KEY secret).' }, 503);
+  if (!env.AI) {
+    return json({ message: 'AI role lookup is not configured (missing Workers AI binding).' }, 503);
   }
+  const ai = env.AI;
 
   let body: { roleTitle?: unknown };
   try {
@@ -233,32 +242,25 @@ async function inferRole(request: Request, env: Env): Promise<Response> {
     return json(result);
   }
 
-  let anthropicRes: Response;
+  // Cloudflare Workers AI — free tier (10,000 requests/day on the account's
+  // free allocation), no separate API key/billing needed since it runs on
+  // the same Cloudflare account as this Worker.
+  const WORKERS_AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+  let aiResult: { response?: string };
   try {
-    anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 2500,
-        system: AI_ROLE_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: `Job/role title: "${roleTitle}"` }],
-      }),
+    aiResult = await ai.run(WORKERS_AI_MODEL, {
+      messages: [
+        { role: 'system', content: AI_ROLE_SYSTEM_PROMPT },
+        { role: 'user', content: `Job/role title: "${roleTitle}"` },
+      ],
+      max_tokens: 2500,
     });
-  } catch {
-    return json({ message: 'Failed to reach the AI provider.' }, 502);
-  }
-  if (!anthropicRes.ok) {
-    console.error('[roles/infer] Anthropic API error:', anthropicRes.status, await anthropicRes.text().catch(() => ''));
+  } catch (err) {
+    console.error('[roles/infer] Workers AI error:', err instanceof Error ? err.message : String(err));
     return json({ message: 'AI provider returned an error.' }, 502);
   }
 
-  const anthropicBody = (await anthropicRes.json()) as { content?: { type: string; text?: string }[] };
-  const rawText = anthropicBody.content?.find((c) => c.type === 'text')?.text || '';
+  const rawText = aiResult.response || '';
   const jsonMatch = rawText.match(/\{[\s\S]*\}/);
   let parsed: unknown;
   try {
