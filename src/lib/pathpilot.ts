@@ -86,7 +86,22 @@ export function getRoleRoadmap(roleTitle?: string, knownSkills: string[] = []): 
 
   if (role?.roadmap?.length) {
     const known = new Set(knownSkills.map((skill) => skill.toLowerCase()));
-    return role.roadmap.filter((item) => !known.has(item.skill.toLowerCase()));
+    // The rich roadmap JSON only stores {skill, video} — without this, every
+    // item defaulted to 'Must Have' downstream (App.tsx's `priority: item.priority
+    // || 'Must Have'`), so the Roadmap page's Nice to Have / Advanced sections
+    // were always empty regardless of the role. Derived from ROLE_SKILLS'
+    // must/nice/advanced tiers so the two data sources agree; tools that aren't
+    // in ROLE_SKILLS at all (e.g. Wireshark, Postman) default to Nice to Have.
+    const req = ROLE_SKILLS[roleTitle || ''];
+    const priorityFor = (skillName: string): 'Must Have' | 'Nice to Have' | 'Advanced' => {
+      const lower = skillName.toLowerCase();
+      if (req?.must.some((s) => s.toLowerCase() === lower)) return 'Must Have';
+      if (req?.advanced.some((s) => s.toLowerCase() === lower)) return 'Advanced';
+      return 'Nice to Have';
+    };
+    return role.roadmap
+      .filter((item) => !known.has(item.skill.toLowerCase()))
+      .map((item) => ({ ...item, priority: priorityFor(item.skill) }));
   }
 
   const fallback = ROLE_SKILLS[roleTitle || 'Full Stack Developer'] || ROLE_SKILLS['Full Stack Developer'];

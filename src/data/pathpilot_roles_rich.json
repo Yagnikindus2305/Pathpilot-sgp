@@ -39,7 +39,14 @@
         { "skill": "TypeScript", "video": "https://www.youtube.com/watch?v=gp5H0Vw39yw" },
         { "skill": "Docker", "video": "https://www.youtube.com/watch?v=3c-iBn73dDE" },
         { "skill": "System Design", "video": "https://www.youtube.com/watch?v=bUHFg8CZFws" },
-        { "skill": "AWS", "video": "https://www.youtube.com/watch?v=ulprqHHWlng" }
+        { "skill": "AWS", "video": "https://www.youtube.com/watch?v=ulprqHHWlng" },
+        { "skill": "Redux", "video": "https://www.youtube.com/results?search_query=Redux%20full%20course%20tutorial" },
+        { "skill": "Jest", "video": "https://www.youtube.com/results?search_query=Jest%20full%20course%20tutorial" },
+        { "skill": "Tailwind CSS", "video": "https://www.youtube.com/results?search_query=Tailwind%20CSS%20full%20course%20tutorial" },
+        { "skill": "Microservices", "video": "https://www.youtube.com/results?search_query=Microservices%20full%20course%20tutorial" },
+        { "skill": "GraphQL", "video": "https://www.youtube.com/results?search_query=GraphQL%20full%20course%20tutorial" },
+        { "skill": "Kubernetes", "video": "https://www.youtube.com/results?search_query=Kubernetes%20full%20course%20tutorial" },
+        { "skill": "CI/CD", "video": "https://www.youtube.com/results?search_query=CI%2FCD%20full%20course%20tutorial" }
       ]
     },
     {
@@ -63,7 +70,16 @@
         { "skill": "TypeScript", "video": "https://www.youtube.com/watch?v=gp5H0Vw39yw" },
         { "skill": "Testing", "video": "https://www.youtube.com/watch?v=r9HdJ8P6GQI" },
         { "skill": "Next.js", "video": "https://www.youtube.com/results?search_query=Next.js%20full%20course%20tutorial" },
-        { "skill": "Accessibility", "video": "https://www.youtube.com/results?search_query=Accessibility%20full%20course%20tutorial" }
+        { "skill": "Accessibility", "video": "https://www.youtube.com/results?search_query=Accessibility%20full%20course%20tutorial" },
+        { "skill": "DOM Manipulation", "video": "https://www.youtube.com/results?search_query=DOM%20Manipulation%20full%20course%20tutorial" },
+        { "skill": "Redux", "video": "https://www.youtube.com/results?search_query=Redux%20full%20course%20tutorial" },
+        { "skill": "Tailwind CSS", "video": "https://www.youtube.com/results?search_query=Tailwind%20CSS%20full%20course%20tutorial" },
+        { "skill": "Webpack", "video": "https://www.youtube.com/results?search_query=Webpack%20full%20course%20tutorial" },
+        { "skill": "Jest", "video": "https://www.youtube.com/results?search_query=Jest%20full%20course%20tutorial" },
+        { "skill": "Web Performance", "video": "https://www.youtube.com/results?search_query=Web%20Performance%20full%20course%20tutorial" },
+        { "skill": "PWA", "video": "https://www.youtube.com/results?search_query=PWA%20full%20course%20tutorial" },
+        { "skill": "WebGL", "video": "https://www.youtube.com/results?search_query=WebGL%20full%20course%20tutorial" },
+        { "skill": "Micro-frontends", "video": "https://www.youtube.com/results?search_query=Micro-frontends%20full%20course%20tutorial" }
       ]
     },
     {
@@ -87,7 +103,16 @@
         { "skill": "System Design", "video": "https://www.youtube.com/watch?v=bUHFg8CZFws" },
         { "skill": "Caching", "video": "https://www.youtube.com/results?search_query=Caching%20full%20course%20tutorial" },
         { "skill": "Microservices", "video": "https://www.youtube.com/results?search_query=Microservices%20full%20course%20tutorial" },
-        { "skill": "Redis", "video": "https://www.youtube.com/results?search_query=Redis%20full%20course%20tutorial" }
+        { "skill": "Redis", "video": "https://www.youtube.com/results?search_query=Redis%20full%20course%20tutorial" },
+        { "skill": "PostgreSQL", "video": "https://www.youtube.com/results?search_query=PostgreSQL%20full%20course%20tutorial" },
+        { "skill": "Authentication", "video": "https://www.youtube.com/results?search_query=Authentication%20full%20course%20tutorial" },
+        { "skill": "TypeScript", "video": "https://www.youtube.com/results?search_query=TypeScript%20full%20course%20tutorial" },
+        { "skill": "Jest", "video": "https://www.youtube.com/results?search_query=Jest%20full%20course%20tutorial" },
+        { "skill": "GraphQL", "video": "https://www.youtube.com/results?search_query=GraphQL%20full%20course%20tutorial" },
+        { "skill": "Kubernetes", "video": "https://www.youtube.com/results?search_query=Kubernetes%20full%20course%20tutorial" },
+        { "skill": "AWS", "video": "https://www.youtube.com/results?search_query=AWS%20full%20course%20tutorial" },
+        { "skill": "Kafka", "video": "https://www.youtube.com/results?search_query=Kafka%20full%20course%20tutorial" },
+        { "skill": "Distributed Systems", "video": "https://www.youtube.com/results?search_query=Distributed%20Systems%20full%20course%20tutorial" }
       ]
     },
     {
@@ -108,7 +133,13 @@
         { "skill": "Jupyter", "video": "https://www.youtube.com/results?search_query=Jupyter%20full%20course%20tutorial" },
         { "skill": "Pandas", "video": "https://www.youtube.com/watch?v=vmEHCJofslg" },
         { "skill": "A/B Testing", "video": "https://www.youtube.com/results?search_query=A%2FB%20Testing%20full%20course%20tutorial" },
-        { "skill": "Advanced SQL", "video": "https://www.youtube.com/results?search_query=Advanced%20SQL%20full%20course%20tutorial" }
+        { "skill": "Advanced SQL", "video": "https://www.youtube.com/results?search_query=Advanced%20SQL%20full%20course%20tutorial" },
+        { "skill": "Storytelling", "video": "https://www.youtube.com/results?search_query=Storytelling%20full%20course%20tutorial" },
+        { "skill": "Big Data", "video": "https://www.youtube.com/results?search_query=Big%20Data%20full%20course%20tutorial" },
+        { "skill": "ETL", "video": "https://www.youtube.com/results?search_query=ETL%20full%20course%20tutorial" },
+        { "skill": "Data Warehousing", "video": "https://www.youtube.com/results?search_query=Data%20Warehousing%20full%20course%20tutorial" },
+        { "skill": "Machine Learning", "video": "https://www.youtube.com/results?search_query=Machine%20Learning%20full%20course%20tutorial" },
+        { "skill": "Automation", "video": "https://www.youtube.com/results?search_query=Automation%20full%20course%20tutorial" }
       ]
     },
     {
@@ -132,7 +163,11 @@
         { "skill": "Deep Learning", "video": "https://www.youtube.com/watch?v=VyWAvY2CF9c" },
         { "skill": "MLOps", "video": "https://www.youtube.com/results?search_query=MLOps%20full%20course%20tutorial" },
         { "skill": "Big Data", "video": "https://www.youtube.com/results?search_query=Big%20Data%20full%20course%20tutorial" },
-        { "skill": "Cloud", "video": "https://www.youtube.com/results?search_query=Cloud%20full%20course%20tutorial" }
+        { "skill": "Cloud", "video": "https://www.youtube.com/results?search_query=Cloud%20full%20course%20tutorial" },
+        { "skill": "TensorFlow", "video": "https://www.youtube.com/results?search_query=TensorFlow%20full%20course%20tutorial" },
+        { "skill": "PyTorch", "video": "https://www.youtube.com/results?search_query=PyTorch%20full%20course%20tutorial" },
+        { "skill": "Matplotlib", "video": "https://www.youtube.com/results?search_query=Matplotlib%20full%20course%20tutorial" },
+        { "skill": "Experiment Design", "video": "https://www.youtube.com/results?search_query=Experiment%20Design%20full%20course%20tutorial" }
       ]
     },
     {
@@ -155,7 +190,12 @@
         { "skill": "MLflow", "video": "https://www.youtube.com/results?search_query=MLflow%20full%20course%20tutorial" },
         { "skill": "MLOps", "video": "https://www.youtube.com/results?search_query=MLOps%20full%20course%20tutorial" },
         { "skill": "Kubernetes", "video": "https://www.youtube.com/watch?v=X48VuDVv0do" },
-        { "skill": "Model Deployment", "video": "https://www.youtube.com/results?search_query=Model%20Deployment%20full%20course%20tutorial" }
+        { "skill": "Model Deployment", "video": "https://www.youtube.com/results?search_query=Model%20Deployment%20full%20course%20tutorial" },
+        { "skill": "Distributed Training", "video": "https://www.youtube.com/results?search_query=Distributed%20Training%20full%20course%20tutorial" },
+        { "skill": "GPU Optimization", "video": "https://www.youtube.com/results?search_query=GPU%20Optimization%20full%20course%20tutorial" },
+        { "skill": "LLMs", "video": "https://www.youtube.com/results?search_query=LLMs%20full%20course%20tutorial" },
+        { "skill": "Computer Vision", "video": "https://www.youtube.com/results?search_query=Computer%20Vision%20full%20course%20tutorial" },
+        { "skill": "NLP", "video": "https://www.youtube.com/results?search_query=NLP%20full%20course%20tutorial" }
       ]
     },
     {
@@ -178,7 +218,15 @@
         { "skill": "Vector Databases", "video": "https://www.youtube.com/results?search_query=Vector%20Databases%20full%20course%20tutorial" },
         { "skill": "RAG", "video": "https://www.youtube.com/results?search_query=RAG%20full%20course%20tutorial" },
         { "skill": "Prompt Engineering", "video": "https://www.youtube.com/results?search_query=Prompt%20Engineering%20full%20course%20tutorial" },
-        { "skill": "MLOps", "video": "https://www.youtube.com/results?search_query=MLOps%20full%20course%20tutorial" }
+        { "skill": "MLOps", "video": "https://www.youtube.com/results?search_query=MLOps%20full%20course%20tutorial" },
+        { "skill": "LLMs", "video": "https://www.youtube.com/results?search_query=LLMs%20full%20course%20tutorial" },
+        { "skill": "APIs", "video": "https://www.youtube.com/results?search_query=APIs%20full%20course%20tutorial" },
+        { "skill": "Model Deployment", "video": "https://www.youtube.com/results?search_query=Model%20Deployment%20full%20course%20tutorial" },
+        { "skill": "Cloud AI", "video": "https://www.youtube.com/results?search_query=Cloud%20AI%20full%20course%20tutorial" },
+        { "skill": "Data Pipelines", "video": "https://www.youtube.com/results?search_query=Data%20Pipelines%20full%20course%20tutorial" },
+        { "skill": "GPU Optimization", "video": "https://www.youtube.com/results?search_query=GPU%20Optimization%20full%20course%20tutorial" },
+        { "skill": "Computer Vision", "video": "https://www.youtube.com/results?search_query=Computer%20Vision%20full%20course%20tutorial" },
+        { "skill": "Recommendation Systems", "video": "https://www.youtube.com/results?search_query=Recommendation%20Systems%20full%20course%20tutorial" }
       ]
     },
     {
@@ -200,7 +248,13 @@
         { "skill": "AWS", "video": "https://www.youtube.com/watch?v=ulprqHHWlng" },
         { "skill": "Data Warehousing", "video": "https://www.youtube.com/results?search_query=Data%20Warehousing%20full%20course%20tutorial" },
         { "skill": "Cloud", "video": "https://www.youtube.com/results?search_query=Cloud%20full%20course%20tutorial" },
-        { "skill": "Streaming", "video": "https://www.youtube.com/results?search_query=Streaming%20full%20course%20tutorial" }
+        { "skill": "Streaming", "video": "https://www.youtube.com/results?search_query=Streaming%20full%20course%20tutorial" },
+        { "skill": "Cloud (AWS/GCP)", "video": "https://www.youtube.com/results?search_query=Cloud%20(AWS%2FGCP)%20full%20course%20tutorial" },
+        { "skill": "Data Modeling", "video": "https://www.youtube.com/results?search_query=Data%20Modeling%20full%20course%20tutorial" },
+        { "skill": "Data Lakes", "video": "https://www.youtube.com/results?search_query=Data%20Lakes%20full%20course%20tutorial" },
+        { "skill": "Performance Tuning", "video": "https://www.youtube.com/results?search_query=Performance%20Tuning%20full%20course%20tutorial" },
+        { "skill": "Pipeline Automation", "video": "https://www.youtube.com/results?search_query=Pipeline%20Automation%20full%20course%20tutorial" },
+        { "skill": "Observability", "video": "https://www.youtube.com/results?search_query=Observability%20full%20course%20tutorial" }
       ]
     },
     {
@@ -222,7 +276,16 @@
         { "skill": "Kubernetes", "video": "https://www.youtube.com/watch?v=X48VuDVv0do" },
         { "skill": "AWS", "video": "https://www.youtube.com/watch?v=ulprqHHWlng" },
         { "skill": "Monitoring", "video": "https://www.youtube.com/results?search_query=Monitoring%20full%20course%20tutorial" },
-        { "skill": "Ansible", "video": "https://www.youtube.com/results?search_query=Ansible%20full%20course%20tutorial" }
+        { "skill": "Ansible", "video": "https://www.youtube.com/results?search_query=Ansible%20full%20course%20tutorial" },
+        { "skill": "Python", "video": "https://www.youtube.com/results?search_query=Python%20full%20course%20tutorial" },
+        { "skill": "Prometheus", "video": "https://www.youtube.com/results?search_query=Prometheus%20full%20course%20tutorial" },
+        { "skill": "Grafana", "video": "https://www.youtube.com/results?search_query=Grafana%20full%20course%20tutorial" },
+        { "skill": "Service Mesh", "video": "https://www.youtube.com/results?search_query=Service%20Mesh%20full%20course%20tutorial" },
+        { "skill": "Istio", "video": "https://www.youtube.com/results?search_query=Istio%20full%20course%20tutorial" },
+        { "skill": "Multi-cloud", "video": "https://www.youtube.com/results?search_query=Multi-cloud%20full%20course%20tutorial" },
+        { "skill": "Security Automation", "video": "https://www.youtube.com/results?search_query=Security%20Automation%20full%20course%20tutorial" },
+        { "skill": "Chaos Engineering", "video": "https://www.youtube.com/results?search_query=Chaos%20Engineering%20full%20course%20tutorial" },
+        { "skill": "GitOps", "video": "https://www.youtube.com/results?search_query=GitOps%20full%20course%20tutorial" }
       ]
     },
     {
@@ -242,7 +305,14 @@
         { "skill": "CloudWatch", "video": "https://www.youtube.com/results?search_query=CloudWatch%20full%20course%20tutorial" },
         { "skill": "Kubernetes", "video": "https://www.youtube.com/watch?v=X48VuDVv0do" },
         { "skill": "Serverless", "video": "https://www.youtube.com/results?search_query=Serverless%20full%20course%20tutorial" },
-        { "skill": "Security", "video": "https://www.youtube.com/results?search_query=Security%20full%20course%20tutorial" }
+        { "skill": "Security", "video": "https://www.youtube.com/results?search_query=Security%20full%20course%20tutorial" },
+        { "skill": "IaC", "video": "https://www.youtube.com/results?search_query=IaC%20full%20course%20tutorial" },
+        { "skill": "Python", "video": "https://www.youtube.com/results?search_query=Python%20full%20course%20tutorial" },
+        { "skill": "Monitoring", "video": "https://www.youtube.com/results?search_query=Monitoring%20full%20course%20tutorial" },
+        { "skill": "Cost Optimization", "video": "https://www.youtube.com/results?search_query=Cost%20Optimization%20full%20course%20tutorial" },
+        { "skill": "Multi-cloud", "video": "https://www.youtube.com/results?search_query=Multi-cloud%20full%20course%20tutorial" },
+        { "skill": "Cloud Architecture", "video": "https://www.youtube.com/results?search_query=Cloud%20Architecture%20full%20course%20tutorial" },
+        { "skill": "Disaster Recovery", "video": "https://www.youtube.com/results?search_query=Disaster%20Recovery%20full%20course%20tutorial" }
       ]
     },
     {
@@ -262,7 +332,16 @@
         { "skill": "Cypress", "video": "https://www.youtube.com/results?search_query=Cypress%20full%20course%20tutorial" },
         { "skill": "Automation Testing", "video": "https://www.youtube.com/results?search_query=Automation%20Testing%20full%20course%20tutorial" },
         { "skill": "API Testing", "video": "https://www.youtube.com/results?search_query=API%20Testing%20full%20course%20tutorial" },
-        { "skill": "CI/CD", "video": "https://www.youtube.com/watch?v=scEDHsr3APg" }
+        { "skill": "CI/CD", "video": "https://www.youtube.com/watch?v=scEDHsr3APg" },
+        { "skill": "Manual Testing", "video": "https://www.youtube.com/results?search_query=Manual%20Testing%20full%20course%20tutorial" },
+        { "skill": "Test Cases", "video": "https://www.youtube.com/results?search_query=Test%20Cases%20full%20course%20tutorial" },
+        { "skill": "Bug Tracking", "video": "https://www.youtube.com/results?search_query=Bug%20Tracking%20full%20course%20tutorial" },
+        { "skill": "Performance Testing", "video": "https://www.youtube.com/results?search_query=Performance%20Testing%20full%20course%20tutorial" },
+        { "skill": "Test Strategy", "video": "https://www.youtube.com/results?search_query=Test%20Strategy%20full%20course%20tutorial" },
+        { "skill": "Security Testing", "video": "https://www.youtube.com/results?search_query=Security%20Testing%20full%20course%20tutorial" },
+        { "skill": "DevOps Testing", "video": "https://www.youtube.com/results?search_query=DevOps%20Testing%20full%20course%20tutorial" },
+        { "skill": "Mobile Testing", "video": "https://www.youtube.com/results?search_query=Mobile%20Testing%20full%20course%20tutorial" },
+        { "skill": "TDD", "video": "https://www.youtube.com/results?search_query=TDD%20full%20course%20tutorial" }
       ]
     },
     {
@@ -302,7 +381,20 @@
         { "skill": "Kotlin", "video": "https://www.youtube.com/results?search_query=Kotlin%20full%20course%20tutorial" },
         { "skill": "React Native", "video": "https://www.youtube.com/results?search_query=React%20Native%20full%20course%20tutorial" },
         { "skill": "Flutter", "video": "https://www.youtube.com/results?search_query=Flutter%20full%20course%20tutorial" },
-        { "skill": "CI/CD", "video": "https://www.youtube.com/watch?v=scEDHsr3APg" }
+        { "skill": "CI/CD", "video": "https://www.youtube.com/watch?v=scEDHsr3APg" },
+        { "skill": "JavaScript", "video": "https://www.youtube.com/results?search_query=JavaScript%20full%20course%20tutorial" },
+        { "skill": "Mobile UI Design", "video": "https://www.youtube.com/results?search_query=Mobile%20UI%20Design%20full%20course%20tutorial" },
+        { "skill": "State Management", "video": "https://www.youtube.com/results?search_query=State%20Management%20full%20course%20tutorial" },
+        { "skill": "Redux", "video": "https://www.youtube.com/results?search_query=Redux%20full%20course%20tutorial" },
+        { "skill": "TypeScript", "video": "https://www.youtube.com/results?search_query=TypeScript%20full%20course%20tutorial" },
+        { "skill": "Dart", "video": "https://www.youtube.com/results?search_query=Dart%20full%20course%20tutorial" },
+        { "skill": "Jest", "video": "https://www.youtube.com/results?search_query=Jest%20full%20course%20tutorial" },
+        { "skill": "Expo", "video": "https://www.youtube.com/results?search_query=Expo%20full%20course%20tutorial" },
+        { "skill": "Native Modules", "video": "https://www.youtube.com/results?search_query=Native%20Modules%20full%20course%20tutorial" },
+        { "skill": "Performance Optimization", "video": "https://www.youtube.com/results?search_query=Performance%20Optimization%20full%20course%20tutorial" },
+        { "skill": "App Store Deployment", "video": "https://www.youtube.com/results?search_query=App%20Store%20Deployment%20full%20course%20tutorial" },
+        { "skill": "Offline Sync", "video": "https://www.youtube.com/results?search_query=Offline%20Sync%20full%20course%20tutorial" },
+        { "skill": "Animations", "video": "https://www.youtube.com/results?search_query=Animations%20full%20course%20tutorial" }
       ]
     },
     {
@@ -472,7 +564,14 @@
         { "skill": "Nmap", "video": "https://www.youtube.com/watch?v=4t4kBkMsDbQ" },
         { "skill": "Threat Hunting", "video": "https://www.youtube.com/results?search_query=Threat%20Hunting%20full%20course%20tutorial" },
         { "skill": "Cloud Security", "video": "https://www.youtube.com/results?search_query=Cloud%20Security%20full%20course%20tutorial" },
-        { "skill": "Python", "video": "https://www.youtube.com/watch?v=rfscVS0vtbw" }
+        { "skill": "Python", "video": "https://www.youtube.com/watch?v=rfscVS0vtbw" },
+        { "skill": "Forensics", "video": "https://www.youtube.com/results?search_query=Forensics%20full%20course%20tutorial" },
+        { "skill": "Compliance", "video": "https://www.youtube.com/results?search_query=Compliance%20full%20course%20tutorial" },
+        { "skill": "Malware Analysis", "video": "https://www.youtube.com/results?search_query=Malware%20Analysis%20full%20course%20tutorial" },
+        { "skill": "Zero Trust", "video": "https://www.youtube.com/results?search_query=Zero%20Trust%20full%20course%20tutorial" },
+        { "skill": "IAM", "video": "https://www.youtube.com/results?search_query=IAM%20full%20course%20tutorial" },
+        { "skill": "Automation", "video": "https://www.youtube.com/results?search_query=Automation%20full%20course%20tutorial" },
+        { "skill": "Security Architecture", "video": "https://www.youtube.com/results?search_query=Security%20Architecture%20full%20course%20tutorial" }
       ]
     },
     {
@@ -491,7 +590,15 @@
         { "skill": "ELK", "video": "https://www.youtube.com/results?search_query=ELK%20full%20course%20tutorial" },
         { "skill": "Threat Intelligence", "video": "https://www.youtube.com/results?search_query=Threat%20Intelligence%20full%20course%20tutorial" },
         { "skill": "EDR", "video": "https://www.youtube.com/results?search_query=EDR%20full%20course%20tutorial" },
-        { "skill": "Python", "video": "https://www.youtube.com/watch?v=rfscVS0vtbw" }
+        { "skill": "Python", "video": "https://www.youtube.com/watch?v=rfscVS0vtbw" },
+        { "skill": "Log Analysis", "video": "https://www.youtube.com/results?search_query=Log%20Analysis%20full%20course%20tutorial" },
+        { "skill": "Playbooks", "video": "https://www.youtube.com/results?search_query=Playbooks%20full%20course%20tutorial" },
+        { "skill": "Cloud Security", "video": "https://www.youtube.com/results?search_query=Cloud%20Security%20full%20course%20tutorial" },
+        { "skill": "Incident Response", "video": "https://www.youtube.com/results?search_query=Incident%20Response%20full%20course%20tutorial" },
+        { "skill": "Automation", "video": "https://www.youtube.com/results?search_query=Automation%20full%20course%20tutorial" },
+        { "skill": "Forensics", "video": "https://www.youtube.com/results?search_query=Forensics%20full%20course%20tutorial" },
+        { "skill": "Continuous Monitoring", "video": "https://www.youtube.com/results?search_query=Continuous%20Monitoring%20full%20course%20tutorial" },
+        { "skill": "Compliance", "video": "https://www.youtube.com/results?search_query=Compliance%20full%20course%20tutorial" }
       ]
     },
     {
@@ -605,7 +712,13 @@
         { "skill": "Go-to-Market", "video": "https://www.youtube.com/results?search_query=Go-to-Market%20Strategy%20full%20course%20tutorial" },
         { "skill": "OKRs", "video": "https://www.youtube.com/results?search_query=OKRs%20full%20course%20tutorial" },
         { "skill": "Customer Interviews", "video": "https://www.youtube.com/results?search_query=Customer%20Interviews%20full%20course%20tutorial" },
-        { "skill": "Leadership", "video": "https://www.youtube.com/results?search_query=Leadership%20full%20course%20tutorial" }
+        { "skill": "Leadership", "video": "https://www.youtube.com/results?search_query=Leadership%20full%20course%20tutorial" },
+        { "skill": "A/B Testing", "video": "https://www.youtube.com/results?search_query=A%2FB%20Testing%20full%20course%20tutorial" },
+        { "skill": "Wireframing", "video": "https://www.youtube.com/results?search_query=Wireframing%20full%20course%20tutorial" },
+        { "skill": "Agile", "video": "https://www.youtube.com/results?search_query=Agile%20full%20course%20tutorial" },
+        { "skill": "Stakeholder Management", "video": "https://www.youtube.com/results?search_query=Stakeholder%20Management%20full%20course%20tutorial" },
+        { "skill": "User Stories", "video": "https://www.youtube.com/results?search_query=User%20Stories%20full%20course%20tutorial" },
+        { "skill": "Data-driven Decision Making", "video": "https://www.youtube.com/results?search_query=Data-driven%20Decision%20Making%20full%20course%20tutorial" }
       ]
     },
     {
@@ -627,7 +740,11 @@
         { "skill": "PMP", "video": "https://www.youtube.com/results?search_query=PMP%20full%20course%20tutorial" },
         { "skill": "Change Control", "video": "https://www.youtube.com/results?search_query=Change%20Control%20full%20course%20tutorial" },
         { "skill": "Resource Management", "video": "https://www.youtube.com/results?search_query=Resource%20Management%20full%20course%20tutorial" },
-        { "skill": "Cost Forecasting", "video": "https://www.youtube.com/results?search_query=Cost%20Forecasting%20full%20course%20tutorial" }
+        { "skill": "Cost Forecasting", "video": "https://www.youtube.com/results?search_query=Cost%20Forecasting%20full%20course%20tutorial" },
+        { "skill": "Scrum", "video": "https://www.youtube.com/results?search_query=Scrum%20full%20course%20tutorial" },
+        { "skill": "Stakeholder Management", "video": "https://www.youtube.com/results?search_query=Stakeholder%20Management%20full%20course%20tutorial" },
+        { "skill": "Reporting", "video": "https://www.youtube.com/results?search_query=Reporting%20full%20course%20tutorial" },
+        { "skill": "Quality Management", "video": "https://www.youtube.com/results?search_query=Quality%20Management%20full%20course%20tutorial" }
       ]
     },
     {
@@ -647,7 +764,14 @@
         { "skill": "Miro", "video": "https://www.youtube.com/results?search_query=Miro%20full%20course%20tutorial" },
         { "skill": "Conflict Resolution", "video": "https://www.youtube.com/results?search_query=Conflict%20Resolution%20full%20course%20tutorial" },
         { "skill": "Scaled Agile", "video": "https://www.youtube.com/results?search_query=Scaled%20Agile%20full%20course%20tutorial" },
-        { "skill": "Team Coaching", "video": "https://www.youtube.com/results?search_query=Team%20Coaching%20full%20course%20tutorial" }
+        { "skill": "Team Coaching", "video": "https://www.youtube.com/results?search_query=Team%20Coaching%20full%20course%20tutorial" },
+        { "skill": "Kanban", "video": "https://www.youtube.com/results?search_query=Kanban%20full%20course%20tutorial" },
+        { "skill": "Metrics", "video": "https://www.youtube.com/results?search_query=Metrics%20full%20course%20tutorial" },
+        { "skill": "Servant Leadership", "video": "https://www.youtube.com/results?search_query=Servant%20Leadership%20full%20course%20tutorial" },
+        { "skill": "Sprint Planning", "video": "https://www.youtube.com/results?search_query=Sprint%20Planning%20full%20course%20tutorial" },
+        { "skill": "Continuous Improvement", "video": "https://www.youtube.com/results?search_query=Continuous%20Improvement%20full%20course%20tutorial" },
+        { "skill": "Retrospectives", "video": "https://www.youtube.com/results?search_query=Retrospectives%20full%20course%20tutorial" },
+        { "skill": "Roadmapping", "video": "https://www.youtube.com/results?search_query=Roadmapping%20full%20course%20tutorial" }
       ]
     },
     {
@@ -667,7 +791,13 @@
         { "skill": "JIRA", "video": "https://www.youtube.com/results?search_query=JIRA%20full%20course%20tutorial" },
         { "skill": "Business Case", "video": "https://www.youtube.com/results?search_query=Business%20Case%20full%20course%20tutorial" },
         { "skill": "Change Management", "video": "https://www.youtube.com/results?search_query=Change%20Management%20full%20course%20tutorial" },
-        { "skill": "UAT", "video": "https://www.youtube.com/results?search_query=UAT%20full%20course%20tutorial" }
+        { "skill": "UAT", "video": "https://www.youtube.com/results?search_query=UAT%20full%20course%20tutorial" },
+        { "skill": "Wireframing", "video": "https://www.youtube.com/results?search_query=Wireframing%20full%20course%20tutorial" },
+        { "skill": "Data Analysis", "video": "https://www.youtube.com/results?search_query=Data%20Analysis%20full%20course%20tutorial" },
+        { "skill": "Stakeholder Management", "video": "https://www.youtube.com/results?search_query=Stakeholder%20Management%20full%20course%20tutorial" },
+        { "skill": "Process Mapping", "video": "https://www.youtube.com/results?search_query=Process%20Mapping%20full%20course%20tutorial" },
+        { "skill": "Analytics Strategy", "video": "https://www.youtube.com/results?search_query=Analytics%20Strategy%20full%20course%20tutorial" },
+        { "skill": "Product Metrics", "video": "https://www.youtube.com/results?search_query=Product%20Metrics%20full%20course%20tutorial" }
       ]
     },
     {
@@ -686,7 +816,14 @@
         { "skill": "Bloomberg Terminal", "video": "https://www.youtube.com/results?search_query=Bloomberg%20Terminal%20full%20course%20tutorial" },
         { "skill": "Investment Analysis", "video": "https://www.youtube.com/results?search_query=Investment%20Analysis%20full%20course%20tutorial" },
         { "skill": "Risk Management", "video": "https://www.youtube.com/results?search_query=Risk%20Management%20full%20course%20tutorial" },
-        { "skill": "M&A", "video": "https://www.youtube.com/results?search_query=Mergers%20and%20Acquisitions%20full%20course%20tutorial" }
+        { "skill": "M&A", "video": "https://www.youtube.com/results?search_query=Mergers%20and%20Acquisitions%20full%20course%20tutorial" },
+        { "skill": "Analysis", "video": "https://www.youtube.com/results?search_query=Analysis%20full%20course%20tutorial" },
+        { "skill": "SQL", "video": "https://www.youtube.com/results?search_query=SQL%20full%20course%20tutorial" },
+        { "skill": "Forecasting", "video": "https://www.youtube.com/results?search_query=Forecasting%20full%20course%20tutorial" },
+        { "skill": "Python", "video": "https://www.youtube.com/results?search_query=Python%20full%20course%20tutorial" },
+        { "skill": "VBA", "video": "https://www.youtube.com/results?search_query=VBA%20full%20course%20tutorial" },
+        { "skill": "Budgeting", "video": "https://www.youtube.com/results?search_query=Budgeting%20full%20course%20tutorial" },
+        { "skill": "Report Writing", "video": "https://www.youtube.com/results?search_query=Report%20Writing%20full%20course%20tutorial" }
       ]
     },
     {
@@ -705,7 +842,14 @@
         { "skill": "LinkedIn Recruiter", "video": "https://www.youtube.com/results?search_query=LinkedIn%20Recruiter%20full%20course%20tutorial" },
         { "skill": "Talent Management", "video": "https://www.youtube.com/results?search_query=Talent%20Management%20full%20course%20tutorial" },
         { "skill": "Compensation", "video": "https://www.youtube.com/results?search_query=Compensation%20and%20Benefits%20full%20course%20tutorial" },
-        { "skill": "HR Strategy", "video": "https://www.youtube.com/results?search_query=HR%20Strategy%20full%20course%20tutorial" }
+        { "skill": "HR Strategy", "video": "https://www.youtube.com/results?search_query=HR%20Strategy%20full%20course%20tutorial" },
+        { "skill": "Employee Relations", "video": "https://www.youtube.com/results?search_query=Employee%20Relations%20full%20course%20tutorial" },
+        { "skill": "Payroll", "video": "https://www.youtube.com/results?search_query=Payroll%20full%20course%20tutorial" },
+        { "skill": "Labor Law", "video": "https://www.youtube.com/results?search_query=Labor%20Law%20full%20course%20tutorial" },
+        { "skill": "HR Analytics", "video": "https://www.youtube.com/results?search_query=HR%20Analytics%20full%20course%20tutorial" },
+        { "skill": "Performance Management", "video": "https://www.youtube.com/results?search_query=Performance%20Management%20full%20course%20tutorial" },
+        { "skill": "Employee Engagement", "video": "https://www.youtube.com/results?search_query=Employee%20Engagement%20full%20course%20tutorial" },
+        { "skill": "Conflict Resolution", "video": "https://www.youtube.com/results?search_query=Conflict%20Resolution%20full%20course%20tutorial" }
       ]
     },
     {
@@ -723,7 +867,14 @@
         { "skill": "Power BI", "video": "https://www.youtube.com/watch?v=AGrl-H87pRU" },
         { "skill": "Six Sigma", "video": "https://www.youtube.com/results?search_query=Six%20Sigma%20full%20course%20tutorial" },
         { "skill": "ERP", "video": "https://www.youtube.com/results?search_query=ERP%20full%20course%20tutorial" },
-        { "skill": "Forecasting", "video": "https://www.youtube.com/results?search_query=Forecasting%20full%20course%20tutorial" }
+        { "skill": "Forecasting", "video": "https://www.youtube.com/results?search_query=Forecasting%20full%20course%20tutorial" },
+        { "skill": "Analysis", "video": "https://www.youtube.com/results?search_query=Analysis%20full%20course%20tutorial" },
+        { "skill": "Supply Chain", "video": "https://www.youtube.com/results?search_query=Supply%20Chain%20full%20course%20tutorial" },
+        { "skill": "Automation", "video": "https://www.youtube.com/results?search_query=Automation%20full%20course%20tutorial" },
+        { "skill": "Lean", "video": "https://www.youtube.com/results?search_query=Lean%20full%20course%20tutorial" },
+        { "skill": "Inventory Modeling", "video": "https://www.youtube.com/results?search_query=Inventory%20Modeling%20full%20course%20tutorial" },
+        { "skill": "KPI Tracking", "video": "https://www.youtube.com/results?search_query=KPI%20Tracking%20full%20course%20tutorial" },
+        { "skill": "Optimization", "video": "https://www.youtube.com/results?search_query=Optimization%20full%20course%20tutorial" }
       ]
     },
     {
@@ -743,7 +894,15 @@
         { "skill": "Mailchimp", "video": "https://www.youtube.com/results?search_query=Mailchimp%20full%20course%20tutorial" },
         { "skill": "Growth Marketing", "video": "https://www.youtube.com/results?search_query=Growth%20Marketing%20full%20course%20tutorial" },
         { "skill": "Funnel Optimization", "video": "https://www.youtube.com/results?search_query=Funnel%20Optimization%20full%20course%20tutorial" },
-        { "skill": "CRM", "video": "https://www.youtube.com/results?search_query=CRM%20full%20course%20tutorial" }
+        { "skill": "CRM", "video": "https://www.youtube.com/results?search_query=CRM%20full%20course%20tutorial" },
+        { "skill": "Content", "video": "https://www.youtube.com/results?search_query=Content%20full%20course%20tutorial" },
+        { "skill": "Paid Ads", "video": "https://www.youtube.com/results?search_query=Paid%20Ads%20full%20course%20tutorial" },
+        { "skill": "Marketing Automation", "video": "https://www.youtube.com/results?search_query=Marketing%20Automation%20full%20course%20tutorial" },
+        { "skill": "CRO", "video": "https://www.youtube.com/results?search_query=CRO%20full%20course%20tutorial" },
+        { "skill": "Copywriting", "video": "https://www.youtube.com/results?search_query=Copywriting%20full%20course%20tutorial" },
+        { "skill": "Data Analysis", "video": "https://www.youtube.com/results?search_query=Data%20Analysis%20full%20course%20tutorial" },
+        { "skill": "Brand Strategy", "video": "https://www.youtube.com/results?search_query=Brand%20Strategy%20full%20course%20tutorial" },
+        { "skill": "Lead Scoring", "video": "https://www.youtube.com/results?search_query=Lead%20Scoring%20full%20course%20tutorial" }
       ]
     },
     {
@@ -762,7 +921,13 @@
         { "skill": "WordPress", "video": "https://www.youtube.com/results?search_query=WordPress%20full%20course%20tutorial" },
         { "skill": "Brand Voice", "video": "https://www.youtube.com/results?search_query=Brand%20Voice%20full%20course%20tutorial" },
         { "skill": "Content Planning", "video": "https://www.youtube.com/results?search_query=Content%20Planning%20full%20course%20tutorial" },
-        { "skill": "SEO Strategy", "video": "https://www.youtube.com/results?search_query=SEO%20Strategy%20full%20course%20tutorial" }
+        { "skill": "SEO Strategy", "video": "https://www.youtube.com/results?search_query=SEO%20Strategy%20full%20course%20tutorial" },
+        { "skill": "Copywriting", "video": "https://www.youtube.com/results?search_query=Copywriting%20full%20course%20tutorial" },
+        { "skill": "Content Strategy", "video": "https://www.youtube.com/results?search_query=Content%20Strategy%20full%20course%20tutorial" },
+        { "skill": "Keyword Research", "video": "https://www.youtube.com/results?search_query=Keyword%20Research%20full%20course%20tutorial" },
+        { "skill": "Analytics", "video": "https://www.youtube.com/results?search_query=Analytics%20full%20course%20tutorial" },
+        { "skill": "Storytelling", "video": "https://www.youtube.com/results?search_query=Storytelling%20full%20course%20tutorial" },
+        { "skill": "Newsletter Marketing", "video": "https://www.youtube.com/results?search_query=Newsletter%20Marketing%20full%20course%20tutorial" }
       ]
     },
     {
@@ -782,7 +947,14 @@
         { "skill": "Miro", "video": "https://www.youtube.com/results?search_query=Miro%20full%20course%20tutorial" },
         { "skill": "Design Systems", "video": "https://www.youtube.com/watch?v=1-7JMuPHIb8" },
         { "skill": "Usability Testing", "video": "https://www.youtube.com/results?search_query=Usability%20Testing%20full%20course%20tutorial" },
-        { "skill": "Interaction Design", "video": "https://www.youtube.com/results?search_query=Interaction%20Design%20full%20course%20tutorial" }
+        { "skill": "Interaction Design", "video": "https://www.youtube.com/results?search_query=Interaction%20Design%20full%20course%20tutorial" },
+        { "skill": "Accessibility", "video": "https://www.youtube.com/results?search_query=Accessibility%20full%20course%20tutorial" },
+        { "skill": "HTML/CSS", "video": "https://www.youtube.com/results?search_query=HTML%2FCSS%20full%20course%20tutorial" },
+        { "skill": "Design Strategy", "video": "https://www.youtube.com/results?search_query=Design%20Strategy%20full%20course%20tutorial" },
+        { "skill": "Motion Design", "video": "https://www.youtube.com/results?search_query=Motion%20Design%20full%20course%20tutorial" },
+        { "skill": "Analytics", "video": "https://www.youtube.com/results?search_query=Analytics%20full%20course%20tutorial" },
+        { "skill": "Personas", "video": "https://www.youtube.com/results?search_query=Personas%20full%20course%20tutorial" },
+        { "skill": "Service Design", "video": "https://www.youtube.com/results?search_query=Service%20Design%20full%20course%20tutorial" }
       ]
     },
     {
@@ -802,7 +974,14 @@
         { "skill": "Notion", "video": "https://www.youtube.com/results?search_query=Notion%20full%20course%20tutorial" },
         { "skill": "Design Leadership", "video": "https://www.youtube.com/results?search_query=Design%20Leadership%20full%20course%20tutorial" },
         { "skill": "Service Design", "video": "https://www.youtube.com/results?search_query=Service%20Design%20full%20course%20tutorial" },
-        { "skill": "Product Strategy", "video": "https://www.youtube.com/watch?v=Qc6QH4K2P5o" }
+        { "skill": "Product Strategy", "video": "https://www.youtube.com/watch?v=Qc6QH4K2P5o" },
+        { "skill": "Interaction Design", "video": "https://www.youtube.com/results?search_query=Interaction%20Design%20full%20course%20tutorial" },
+        { "skill": "Front-end Basics", "video": "https://www.youtube.com/results?search_query=Front-end%20Basics%20full%20course%20tutorial" },
+        { "skill": "Analytics", "video": "https://www.youtube.com/results?search_query=Analytics%20full%20course%20tutorial" },
+        { "skill": "Usability Testing", "video": "https://www.youtube.com/results?search_query=Usability%20Testing%20full%20course%20tutorial" },
+        { "skill": "Storytelling", "video": "https://www.youtube.com/results?search_query=Storytelling%20full%20course%20tutorial" },
+        { "skill": "Design Ops", "video": "https://www.youtube.com/results?search_query=Design%20Ops%20full%20course%20tutorial" },
+        { "skill": "Accessibility", "video": "https://www.youtube.com/results?search_query=Accessibility%20full%20course%20tutorial" }
       ]
     },
     {
