@@ -45,11 +45,15 @@ async function logEmailEvent(email: string, type: 'signup' | 'password_reset' | 
   }
 }
 
-// Forensic login/signup/logout trail — goes through the Worker (not a direct
-// Supabase insert) so the real client IP can be attached server-side; the
-// browser can't be trusted to self-report its own IP. Best-effort: never
-// blocks the actual auth flow if this fails.
-async function logActivity(email: string, event: 'login_success' | 'login_failed' | 'signup' | 'logout', accessToken?: string) {
+export type ActivityEvent = 'login_success' | 'login_failed' | 'signup' | 'logout' | 'resume_analyzed' | 'resume_compared' | 'aptitude_completed' | 'application_submitted';
+
+// Forensic activity trail — goes through the Worker (not a direct Supabase
+// insert) so the real client IP can be attached server-side; the browser
+// can't be trusted to self-report its own IP. Best-effort: never blocks the
+// action itself if this fails. Exported so pages outside AuthContext (resume
+// analysis, compare, aptitude, applications) can log what a signed-in user
+// actually did, not just their login/logout.
+export async function logActivity(email: string, event: ActivityEvent, accessToken?: string) {
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;

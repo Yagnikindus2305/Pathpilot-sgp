@@ -142,7 +142,10 @@ async function logUserView(request: Request, env: Env): Promise<Response> {
   return json({ ok: true });
 }
 
-const ACTIVITY_EVENTS = new Set(['login_success', 'login_failed', 'signup', 'logout']);
+const ACTIVITY_EVENTS = new Set([
+  'login_success', 'login_failed', 'signup', 'logout',
+  'resume_analyzed', 'resume_compared', 'aptitude_completed', 'application_submitted',
+]);
 const SIMPLE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Records every login/signup/logout attempt (success and failure) with the

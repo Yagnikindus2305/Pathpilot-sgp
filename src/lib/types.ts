@@ -79,6 +79,7 @@ export interface ResumeAnalysis {
   skills: string[];
   job_roles: JobRoleMatch[];
   raw_text: string;
+  file_path: string | null;
   created_at: string;
 }
 

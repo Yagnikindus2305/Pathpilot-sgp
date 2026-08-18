@@ -5,7 +5,7 @@ import {
   Mail, Menu, MessageCircle, Moon, Pencil, Play, Plus, Shield, ShieldCheck, Sparkles, Sun, Target,
   TrendingUp, Trash2, Trophy, Upload, UserRound, X, Zap,
 } from 'lucide-react';
-import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { AuthProvider, useAuth, logActivity } from '@/context/AuthContext';
 import yagnikPhoto from '@/assets/founders/yagnik-chandira.jpeg';
 import meetPhoto from '@/assets/founders/meet-mistry.jpeg';
 import vidhiPhoto from '@/assets/founders/vidhi-ramani.jpeg';
@@ -476,6 +476,16 @@ function Workspace() {
   const { theme, toggleTheme } = useTheme();
   const isAdmin = Boolean(profile?.is_admin);
   const [active, setActive] = useState<Module>(() => (profile?.is_admin ? 'admin' : 'profile'));
+  // profile is still null on first render (it loads asynchronously after
+  // sign-in), so the lazy initializer above almost always picks 'profile'
+  // for everyone, admin included, and never gets a second chance to correct
+  // itself once profile.is_admin actually arrives. Admin's nav only ever
+  // has one item ('admin' — see the filter below), so there's no page an
+  // admin could legitimately be on other than it.
+  useEffect(() => {
+    if (isAdmin && active !== 'admin') setActive('admin');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
   const [mobileNav, setMobileNav] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [gateMsg, setGateMsg] = useState('');
@@ -617,7 +627,7 @@ function formatSalaryRange(min: number | null, max: number | null): string {
 // Renders nothing at all if the feature isn't configured or returns no results,
 // so an unset API key never shows a broken section on the dashboard.
 function LiveJobsCard({ role, location, go }: { role?: string; location?: string; go: (module: Module) => void }) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [jobs, setJobs] = useState<LiveJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [checked, setChecked] = useState(false);
@@ -636,7 +646,7 @@ function LiveJobsCard({ role, location, go }: { role?: string; location?: string
   async function apply(job: LiveJob) {
     if (!user) return;
     setAppliedKeys((prev) => Array.from(new Set([...prev, `${job.company}::${job.title}`])));
-    await recordApplication(user.id, job.company, job.title, job.applyUrl || '#');
+    await recordApplication(user.id, job.company, job.title, job.applyUrl || '#', user.email, session?.access_token);
     if (job.applyUrl) window.open(job.applyUrl, '_blank', 'noopener');
   }
 
@@ -859,7 +869,7 @@ async function syncRoadmap(skills: string[], role: string, userId: string) {
 }
 
 function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; onProgress?: () => void }) {
-  const { user, profile, updateProfile } = useAuth();
+  const { user, profile, updateProfile, session } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<ResumeAnalysis | null>(null);
   const [busy, setBusy] = useState(false);
@@ -874,7 +884,14 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
     if (!extracted) setError('We could not extract text from that file, so this score reflects no readable content. Try a text-based PDF, DOCX, or TXT file (not a scanned image) for a real scan.');
     const combinedText = [extracted ? text : '', experienceText].filter(Boolean).join('\n\n');
     const result = analyzeResumeText(combinedText, profile?.target_role, history.length + 1);
-    const { data, error: saveError } = await supabase.from('resume_analyses').insert({ user_id: user.id, file_name: file.name, ats_score: result.atsScore, skills: result.skills, job_roles: result.jobRoles, raw_text: combinedText }).select('*').maybeSingle();
+    // Keeps the actual file, not just its extracted text — so the admin
+    // panel (and the student themselves) can open the original resume, not
+    // just see the parsed skill list. Best-effort: a storage hiccup
+    // shouldn't block the analysis itself, so file_path just stays null.
+    const storagePath = `${user.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    const { error: uploadError } = await supabase.storage.from('resumes').upload(storagePath, file);
+    const filePath = uploadError ? null : storagePath;
+    const { data, error: saveError } = await supabase.from('resume_analyses').insert({ user_id: user.id, file_name: file.name, ats_score: result.atsScore, skills: result.skills, job_roles: result.jobRoles, raw_text: combinedText, file_path: filePath }).select('*').maybeSingle();
     if (saveError) setError(saveError.message);
     else if (data) {
       const saved = data as ResumeAnalysis;
@@ -882,6 +899,7 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
       setHistory((prev) => [saved, ...prev]);
       await updateProfile({ saved_skills: result.skills });
       await syncRoadmap(result.skills, profile?.target_role || 'Full Stack Developer', user.id);
+      if (user.email) await logActivity(user.email, 'resume_analyzed', session?.access_token);
       onProgress?.();
     }
     setBusy(false);
@@ -896,7 +914,7 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
 }
 
 function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalysis; round: number; onReset: () => void; go: (module: Module) => void }) {
-  const { user, profile, updateProfile } = useAuth();
+  const { user, profile, updateProfile, session } = useAuth();
   const targetRole = profile?.target_role || analysis.job_roles[0]?.role || 'Full Stack Developer';
   // For a role typed via "Other" that isn't in our curated datasets, the AI
   // lookup (aiRoleResolver.ts) supplies real skills instead of silently
@@ -930,7 +948,7 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
     if (!user) return;
     const link = buildJobSearchUrl(company, role);
     setAppliedKeys((prev) => Array.from(new Set([...prev, `${company}::${role}`])));
-    await recordApplication(user.id, company, role, link);
+    await recordApplication(user.id, company, role, link, user.email, session?.access_token);
     window.open(link, '_blank', 'noopener');
   }
 
@@ -1161,7 +1179,7 @@ function difficultyPoolForRound(round: number): QuestionDifficulty[] {
 }
 
 function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProgress?: () => void }) {
-  const { user, profile } = useAuth();
+  const { user, profile, session } = useAuth();
   const [category, setCategory] = useState<string | null>(null);
   const [round, setRound] = useState(1);
   const [activeQuestions, setActiveQuestions] = useState<Question[]>([]);
@@ -1214,6 +1232,7 @@ function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProg
     if (user && category) {
       const { data } = await supabase.from('aptitude_results').insert({ user_id: user.id, category, score: result, total: activeQuestions.length }).select('*').maybeSingle();
       if (data) setResults((prev) => [...prev, data as AptitudeResult]);
+      if (user.email) await logActivity(user.email, 'aptitude_completed', session?.access_token);
       onProgress?.();
     }
   }
@@ -1252,10 +1271,10 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
   return <><PageHeader eyebrow={`APTITUDE TEST · ROUND ${round}${round > 1 ? ' (HARDER)' : ''}`} title={category}><div className="test-header-actions">{!submitted && <span className={timeLeft <= 60 ? 'timer-pill low' : 'timer-pill'}>{formatTime(timeLeft)}</span>}<button className="secondary-btn" onClick={onBack}><ArrowRight size={15} className="back-icon" /> All categories</button></div></PageHeader>{!submitted && <p className="anti-cheat-notice"><ShieldCheck size={13} /> Stay on this tab and don't copy answers — switching tabs, windows, or copying auto-submits your test.</p>}{submitted ? <div className="test-result"><div className="result-trophy"><Trophy size={28} /></div><div className="eyebrow">TEST COMPLETE</div>{autoSubmitReason && <p className="auto-submit-note">Auto-submitted — {autoSubmitReason}</p>}<h2>You scored {score} out of {qs.length}</h2><p>{score / qs.length >= .7 ? `Excellent work. You are building real interview momentum. Round ${round + 1} will pull tougher questions.` : 'Good attempt. Review the gaps and give it another shot.'}</p><ProgressRing score={Math.round(score / qs.length * 100)} size={130} />{score / qs.length >= .7 && <button className="primary-btn" onClick={() => go('compare')}>Continue to Resume Compare <ArrowRight size={16} /></button>}<button className={score / qs.length >= .7 ? 'secondary-btn' : 'primary-btn'} onClick={() => { setAnswers([]); onBack(); }}>Back to categories <ArrowRight size={16} /></button></div> : <div className="question-list no-select" onContextMenu={(e) => e.preventDefault()}>{qs.map((q, i) => <div className="question-card" key={q.q}><div className="question-number">0{i + 1}</div><h2>{q.q}</h2><div className="options">{q.options.map((option, oi) => <button className={answers[i] === oi ? 'option selected' : 'option'} onClick={() => { const next = [...answers]; next[i] = oi; setAnswers(next); }} key={option}><span>{String.fromCharCode(65 + oi)}</span>{option}{answers[i] === oi && <Check size={16} />}</button>)}</div></div>)}<button className="primary-btn submit-test" onClick={() => onSubmit()}>Submit answers ({answeredCount}/{qs.length} answered) <ArrowRight size={17} /></button></div>}</>;
 }
 
-function ComparePage({ roadmap, onProgress, go }: { roadmap: RoadmapSkill[]; onProgress?: () => void; go: (module: Module) => void }) { const { user, profile, updateProfile } = useAuth(); const [oldFile, setOldFile] = useState<File | null>(null); const [newFile, setNewFile] = useState<File | null>(null); const [result, setResult] = useState<{ old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> } | null>(null); const [busy, setBusy] = useState(false); async function compare() { if (!oldFile || !newFile || !user) return; setBusy(true); const [{ text: oldText }, { text: newText }, experienceText] = await Promise.all([extractResumeText(oldFile), extractResumeText(newFile), fetchExperienceText(user.id)]); const old = analyzeResumeText(oldText || oldFile.name); const next = analyzeResumeText([newText || newFile.name, experienceText].filter(Boolean).join('\n\n')); setResult({ old, next }); await supabase.from('resume_comparisons').insert({ user_id: user.id, old_score: old.atsScore, new_score: next.atsScore, skills_gained: next.skills.filter((s) => !old.skills.includes(s)), new_roles: next.jobRoles.filter((r) => !old.jobRoles.some((x) => x.role === r.role)).map((r) => r.role) }); await updateProfile({ saved_skills: next.skills }); await syncRoadmap(next.skills, profile?.target_role || 'Full Stack Developer', user.id); onProgress?.(); setBusy(false); } return <><PageHeader eyebrow="MODULE 05 / BEFORE & AFTER" title="See your progress clearly." /><div className="module-intro"><p>Compare two versions of your resume to see what changed, what improved, and which new roles opened up.</p></div>{!result ? <><div className="compare-upload"><ResumeDrop label="OLD RESUME" file={oldFile} setFile={setOldFile} /><div className="vs-badge">VS</div><ResumeDrop label="NEW RESUME" file={newFile} setFile={setNewFile} /></div><button className="primary-btn compare-btn" disabled={!oldFile || !newFile || busy} onClick={compare}>{busy ? 'Comparing resumes…' : 'Compare resumes'}<Sparkles size={17} /></button></> : <CompareResult result={result} roadmap={roadmap} reset={() => setResult(null)} profile={profile} go={go} />}</>; }
+function ComparePage({ roadmap, onProgress, go }: { roadmap: RoadmapSkill[]; onProgress?: () => void; go: (module: Module) => void }) { const { user, profile, updateProfile, session } = useAuth(); const [oldFile, setOldFile] = useState<File | null>(null); const [newFile, setNewFile] = useState<File | null>(null); const [result, setResult] = useState<{ old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> } | null>(null); const [busy, setBusy] = useState(false); async function compare() { if (!oldFile || !newFile || !user) return; setBusy(true); const [{ text: oldText }, { text: newText }, experienceText] = await Promise.all([extractResumeText(oldFile), extractResumeText(newFile), fetchExperienceText(user.id)]); const old = analyzeResumeText(oldText || oldFile.name); const next = analyzeResumeText([newText || newFile.name, experienceText].filter(Boolean).join('\n\n')); setResult({ old, next }); await supabase.from('resume_comparisons').insert({ user_id: user.id, old_score: old.atsScore, new_score: next.atsScore, skills_gained: next.skills.filter((s) => !old.skills.includes(s)), new_roles: next.jobRoles.filter((r) => !old.jobRoles.some((x) => x.role === r.role)).map((r) => r.role) }); await updateProfile({ saved_skills: next.skills }); await syncRoadmap(next.skills, profile?.target_role || 'Full Stack Developer', user.id); if (user.email) await logActivity(user.email, 'resume_compared', session?.access_token); onProgress?.(); setBusy(false); } return <><PageHeader eyebrow="MODULE 05 / BEFORE & AFTER" title="See your progress clearly." /><div className="module-intro"><p>Compare two versions of your resume to see what changed, what improved, and which new roles opened up.</p></div>{!result ? <><div className="compare-upload"><ResumeDrop label="OLD RESUME" file={oldFile} setFile={setOldFile} /><div className="vs-badge">VS</div><ResumeDrop label="NEW RESUME" file={newFile} setFile={setNewFile} /></div><button className="primary-btn compare-btn" disabled={!oldFile || !newFile || busy} onClick={compare}>{busy ? 'Comparing resumes…' : 'Compare resumes'}<Sparkles size={17} /></button></> : <CompareResult result={result} roadmap={roadmap} reset={() => setResult(null)} profile={profile} go={go} />}</>; }
 function ResumeDrop({ label, file, setFile }: { label: string; file: File | null; setFile: (f: File | null) => void }) { return <div className="resume-drop"><div className="eyebrow">{label}</div><label className="drop-inner"><div className="upload-icon small"><Upload size={19} /></div><strong>{file ? file.name : 'Choose a resume'}</strong><span>PDF, DOCX or TXT</span><input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label></div>; }
 function CompareResult({ result, roadmap, reset, profile, go }: { result: { old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> }; roadmap: RoadmapSkill[]; reset: () => void; profile: Profile | null; go: (module: Module) => void }) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const gained = result.next.skills.filter((s) => !result.old.skills.includes(s));
   const unlockedRoles = result.next.jobRoles.filter((r) => !result.old.jobRoles.some((x) => x.role === r.role));
   // Same fix as Resume Analysis's Matched Job Roles: once a target role is
@@ -1301,7 +1320,7 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
     if (!user) return;
     const link = buildJobSearchUrl(company, role);
     setAppliedKeys((prev) => Array.from(new Set([...prev, `${company}::${role}`])));
-    await recordApplication(user.id, company, role, link);
+    await recordApplication(user.id, company, role, link, user.email, session?.access_token);
     window.open(link, '_blank', 'noopener');
   }
 
@@ -1630,6 +1649,18 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
   const [comparisons, setComparisons] = useState<ResumeComparison[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [loading, setLoading] = useState(true);
+  const [openingResumeId, setOpeningResumeId] = useState<string | null>(null);
+
+  // Signed URL, not a public link — the "resumes" bucket is private, so
+  // this only works because admin_select_all_resumes (storage RLS) allows
+  // this admin's own session to read any user's file, for 10 minutes.
+  async function viewResume(resumeId: string, filePath: string) {
+    setOpeningResumeId(resumeId);
+    const { data, error } = await supabase.storage.from('resumes').createSignedUrl(filePath, 600);
+    setOpeningResumeId(null);
+    if (error || !data) { window.alert('Could not open this resume: ' + (error?.message || 'unknown error')); return; }
+    window.open(data.signedUrl, '_blank', 'noopener');
+  }
 
   useEffect(() => {
     fetch('/api/admin/log-view', {
@@ -1687,7 +1718,11 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
         {resumes.length ? <div className="admin-resume-history">
           {resumes.map((r, i) => <div className="admin-resume-entry" key={r.id}>
             <div className="admin-resume-entry-head">
-              <div><strong>{r.file_name}</strong><span className="muted-label">{new Date(r.created_at).toLocaleString()}{i === 0 ? ' · Latest' : ''}</span></div>
+              <div>
+                <strong>{r.file_name}</strong>
+                <span className="muted-label">{new Date(r.created_at).toLocaleString()}{i === 0 ? ' · Latest' : ''}</span>
+                {r.file_path ? <button type="button" className="text-btn" disabled={openingResumeId === r.id} onClick={() => viewResume(r.id, r.file_path as string)}>{openingResumeId === r.id ? 'Opening…' : 'View resume file'} <ArrowRight size={12} /></button> : <span className="muted-label">Original file not stored (uploaded before this feature)</span>}
+              </div>
               <ProgressRing score={r.ats_score} size={64} />
             </div>
             <div className="tag-cloud">{r.skills.map((s) => <SkillTag green key={s}>{s}</SkillTag>)}</div>
