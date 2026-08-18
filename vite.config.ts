@@ -36,6 +36,13 @@ export default defineConfig({
             handler: 'NetworkOnly',
           },
         ],
+        // Without these, a newly-deployed service worker sits "waiting"
+        // until every open tab is fully closed before it takes over — a
+        // reload alone isn't enough, which reads as "my fix isn't live"
+        // even when the deploy succeeded. This makes a reload sufficient.
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
       },
     }),
   ],

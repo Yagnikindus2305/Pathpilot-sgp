@@ -1610,7 +1610,7 @@ function AdminPage() {
               <td>{a.email}</td>
               <td>{a.event === 'login_failed' ? <span className="skill-tag">{ACTIVITY_EVENT_LABELS[a.event]}</span> : ACTIVITY_EVENT_LABELS[a.event] || a.event}</td>
               <td>{a.ip_address || '—'}</td>
-              <td className="admin-ua-cell">{a.user_agent || '—'}</td>
+              <td className="admin-ua-cell" title={a.user_agent}>{a.user_agent || '—'}</td>
             </tr>)}
           </tbody>
         </table>
@@ -1648,6 +1648,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
   const [aptitude, setAptitude] = useState<AptitudeResult[]>([]);
   const [comparisons, setComparisons] = useState<ResumeComparison[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [applications, setApplications] = useState<JobApplication[]>([]);
   const [loading, setLoading] = useState(true);
   const [openingResumeId, setOpeningResumeId] = useState<string | null>(null);
 
@@ -1672,12 +1673,13 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const [resumesRes, roadmapRes, aptitudeRes, comparisonsRes, milestonesRes] = await Promise.all([
+      const [resumesRes, roadmapRes, aptitudeRes, comparisonsRes, milestonesRes, applicationsRes] = await Promise.all([
         supabase.from('resume_analyses').select('*').eq('user_id', targetUser.id).order('created_at', { ascending: false }),
         supabase.from('roadmap_skills').select('*').eq('user_id', targetUser.id),
         supabase.from('aptitude_results').select('*').eq('user_id', targetUser.id).order('created_at', { ascending: false }),
         supabase.from('resume_comparisons').select('*').eq('user_id', targetUser.id).order('created_at', { ascending: false }),
         supabase.from('milestones').select('*').eq('user_id', targetUser.id),
+        supabase.from('job_applications').select('*').eq('user_id', targetUser.id),
       ]);
       if (cancelled) return;
       setResumes((resumesRes.data || []) as ResumeAnalysis[]);
@@ -1685,6 +1687,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
       setAptitude((aptitudeRes.data || []) as AptitudeResult[]);
       setComparisons((comparisonsRes.data || []) as ResumeComparison[]);
       setMilestones((milestonesRes.data || []) as Milestone[]);
+      setApplications((applicationsRes.data || []) as JobApplication[]);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -1692,9 +1695,24 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
   }, [targetUser.id]);
 
   const radarData = APTITUDE_CATEGORIES.map((cat) => ({ label: cat, value: bestAttemptPct(aptitude, cat) }));
-  const roadmapDone = roadmap.filter((r) => r.done).length;
+  const roadmapDoneCount = roadmap.filter((r) => r.done).length;
+  // Same derivation Dashboard uses (isMilestoneDone) — a milestone can be
+  // "done" either because its own DB row was explicitly flagged, or because
+  // the underlying condition it represents is already true. Using only the
+  // raw completed flag (as this page did before) under-reports real
+  // progress, since the app itself relies on this same derived check rather
+  // than always writing the flag directly.
+  const roadmapAllDone = roadmap.length > 0 && roadmap.every((x) => x.done);
+  const aptitudePassed = aptitude.some((r) => r.score / Math.max(r.total, 1) >= .7);
+  const profileComplete = Boolean(targetUser.full_name && targetUser.college && targetUser.target_role);
   const displayMilestones = milestones.length ? milestones : DEFAULT_MILESTONES.map((m) => ({ ...m, id: m.key, completed: false }));
-  const milestonesDone = displayMilestones.filter((m) => m.completed).length;
+  const isMilestoneDone = (m: { key: string; completed: boolean }) => m.completed
+    || (m.key === 'complete_profile' && profileComplete)
+    || (m.key === 'analyze_resume' && resumes.length > 0)
+    || (m.key === 'complete_roadmap' && roadmapAllDone)
+    || (m.key === 'aptitude_70' && aptitudePassed)
+    || (m.key === 'apply_10' && applications.length >= 10);
+  const milestonesDone = displayMilestones.filter(isMilestoneDone).length;
 
   return <>
     <PageHeader eyebrow="ADMIN / USER DETAIL" title={targetUser.full_name || targetUser.email}>
@@ -1732,7 +1750,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
       </div>
 
       <div className="content-card">
-        <SectionTitle icon={Target} title="Skill roadmap" action={<span className="muted-label">{roadmapDone}/{roadmap.length} complete</span>} />
+        <SectionTitle icon={Target} title="Skill roadmap" action={<span className="muted-label">{roadmapDoneCount}/{roadmap.length} complete</span>} />
         {roadmap.length ? <div className="roadmap-groups">
           {(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => {
             const items = roadmap.filter((r) => r.priority === tier);
@@ -1773,7 +1791,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
       <div className="content-card">
         <SectionTitle icon={CheckCircle2} title="Milestones" action={<span className="muted-label">{milestonesDone}/{displayMilestones.length} complete</span>} />
         <div className="milestone-list">
-          {displayMilestones.map((m) => <div className={m.completed ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{m.completed ? 'Completed' : 'Not yet'}</p></div></div>)}
+          {displayMilestones.map((m) => { const done = isMilestoneDone(m); return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{done ? 'Completed' : 'Not yet'}</p></div></div>; })}
         </div>
       </div>
     </>}
