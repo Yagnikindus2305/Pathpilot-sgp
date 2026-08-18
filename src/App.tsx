@@ -838,6 +838,26 @@ async function pruneStaleRoadmapSkills(userId: string, requiredSkills: string[])
   if (stale.length) await supabase.from('roadmap_skills').delete().eq('user_id', userId).in('skill_name', stale);
 }
 
+// Regenerates the whole roadmap from a fresh skill set — used after both a
+// new resume analysis AND a resume comparison, so the roadmap always
+// reflects the most recently uploaded resume rather than going stale after
+// Compare (which previously never touched roadmap_skills at all).
+async function syncRoadmap(skills: string[], role: string, userId: string) {
+  // A new resume means skills need to be re-verified against what THIS
+  // resume shows — carrying old done-checkmarks forward would leave
+  // Aptitude/Compare unlocked on stale progress. Reset first, so the
+  // roadmap (and everything gated behind it) has to be earned again.
+  await supabase.from('roadmap_skills').delete().eq('user_id', userId);
+  const roadmapItems = isKnownRole(role)
+    ? await fetchRoadmap(role, skills).then((res) => res.roadmap).catch(() => getRoleRoadmap(role, skills))
+    : (await fetchAIRole(role))?.roadmap || getRoleRoadmap(role, skills);
+  const rows = roadmapItems.map((item) => ({ user_id: userId, skill_name: item.skill, priority: item.priority || 'Must Have' }));
+  if (rows.length) {
+    const { error } = await supabase.from('roadmap_skills').upsert(rows, { onConflict: 'user_id,skill_name' });
+    if (error) console.error('Failed to sync roadmap skills:', error.message);
+  }
+}
+
 function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; onProgress?: () => void }) {
   const { user, profile, updateProfile } = useAuth();
   const [file, setFile] = useState<File | null>(null);
@@ -865,22 +885,6 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
       onProgress?.();
     }
     setBusy(false);
-  }
-
-  async function syncRoadmap(skills: string[], role: string, userId: string) {
-    // A new resume analysis means skills need to be re-verified against what
-    // THIS resume shows — carrying old done-checkmarks forward would leave
-    // Aptitude/Compare unlocked on stale progress. Reset first, so the
-    // roadmap (and everything gated behind it) has to be earned again.
-    await supabase.from('roadmap_skills').delete().eq('user_id', userId);
-    const roadmapItems = isKnownRole(role)
-      ? await fetchRoadmap(role, skills).then((res) => res.roadmap).catch(() => getRoleRoadmap(role, skills))
-      : (await fetchAIRole(role))?.roadmap || getRoleRoadmap(role, skills);
-    const rows = roadmapItems.map((item) => ({ user_id: userId, skill_name: item.skill, priority: item.priority || 'Must Have' }));
-    if (rows.length) {
-      const { error } = await supabase.from('roadmap_skills').upsert(rows, { onConflict: 'user_id,skill_name' });
-      if (error) console.error('Failed to sync roadmap skills:', error.message);
-    }
   }
 
   function roundOf(id: string) {
@@ -1020,7 +1024,7 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
       <SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your detected skills</span>} />
       <p className="missing-intro">Salary shown is that company's full range for the role, not a guaranteed offer at your match%. <TierBadge tier="Mass recruiter" /> / Tier-1 are realistic near-term targets — <TierBadge tier="Dream" /> tiers are stretch goals worth aiming for once you're truly interview-ready.</p>
       <div className="roles-list">
-        {companyMatches.slice(0, 12).map((c, index) => { const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`); const canApply = index < 2; return <div className="role-row" key={c.company}>
+        {companyMatches.slice(0, 12).map((c) => { const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`); const canApply = c.bestMatch.missing.length === 0; return <div className="role-row" key={c.company}>
           <div className="role-rank">{c.bestMatch.matchPct}%</div>
           <div className="role-info">
             <strong>{c.company}</strong>
@@ -1032,7 +1036,7 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
             {c.bestMatch.have.slice(0, 3).map((skill) => <SkillTag key={skill}>{skill}</SkillTag>)}
             {c.bestMatch.missing.length > 0 && <span className="role-skill-missing">missing {c.bestMatch.missing.slice(0, 3).join(', ')}{c.bestMatch.missing.length > 3 ? '…' : ''}</span>}
           </div>
-          {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> : <span className="muted-label">Close the gap first</span>}
+          {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> : <span className="muted-label">Finish {c.bestMatch.missing.length} more skill{c.bestMatch.missing.length === 1 ? '' : 's'} to apply</span>}
         </div>; })}
       </div>
     </div>}
@@ -1248,7 +1252,7 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
   return <><PageHeader eyebrow={`APTITUDE TEST · ROUND ${round}${round > 1 ? ' (HARDER)' : ''}`} title={category}><div className="test-header-actions">{!submitted && <span className={timeLeft <= 60 ? 'timer-pill low' : 'timer-pill'}>{formatTime(timeLeft)}</span>}<button className="secondary-btn" onClick={onBack}><ArrowRight size={15} className="back-icon" /> All categories</button></div></PageHeader>{!submitted && <p className="anti-cheat-notice"><ShieldCheck size={13} /> Stay on this tab and don't copy answers — switching tabs, windows, or copying auto-submits your test.</p>}{submitted ? <div className="test-result"><div className="result-trophy"><Trophy size={28} /></div><div className="eyebrow">TEST COMPLETE</div>{autoSubmitReason && <p className="auto-submit-note">Auto-submitted — {autoSubmitReason}</p>}<h2>You scored {score} out of {qs.length}</h2><p>{score / qs.length >= .7 ? `Excellent work. You are building real interview momentum. Round ${round + 1} will pull tougher questions.` : 'Good attempt. Review the gaps and give it another shot.'}</p><ProgressRing score={Math.round(score / qs.length * 100)} size={130} />{score / qs.length >= .7 && <button className="primary-btn" onClick={() => go('compare')}>Continue to Resume Compare <ArrowRight size={16} /></button>}<button className={score / qs.length >= .7 ? 'secondary-btn' : 'primary-btn'} onClick={() => { setAnswers([]); onBack(); }}>Back to categories <ArrowRight size={16} /></button></div> : <div className="question-list no-select" onContextMenu={(e) => e.preventDefault()}>{qs.map((q, i) => <div className="question-card" key={q.q}><div className="question-number">0{i + 1}</div><h2>{q.q}</h2><div className="options">{q.options.map((option, oi) => <button className={answers[i] === oi ? 'option selected' : 'option'} onClick={() => { const next = [...answers]; next[i] = oi; setAnswers(next); }} key={option}><span>{String.fromCharCode(65 + oi)}</span>{option}{answers[i] === oi && <Check size={16} />}</button>)}</div></div>)}<button className="primary-btn submit-test" onClick={() => onSubmit()}>Submit answers ({answeredCount}/{qs.length} answered) <ArrowRight size={17} /></button></div>}</>;
 }
 
-function ComparePage({ roadmap, onProgress, go }: { roadmap: RoadmapSkill[]; onProgress?: () => void; go: (module: Module) => void }) { const { user, profile } = useAuth(); const [oldFile, setOldFile] = useState<File | null>(null); const [newFile, setNewFile] = useState<File | null>(null); const [result, setResult] = useState<{ old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> } | null>(null); const [busy, setBusy] = useState(false); async function compare() { if (!oldFile || !newFile || !user) return; setBusy(true); const [{ text: oldText }, { text: newText }, experienceText] = await Promise.all([extractResumeText(oldFile), extractResumeText(newFile), fetchExperienceText(user.id)]); const old = analyzeResumeText(oldText || oldFile.name); const next = analyzeResumeText([newText || newFile.name, experienceText].filter(Boolean).join('\n\n')); setResult({ old, next }); await supabase.from('resume_comparisons').insert({ user_id: user.id, old_score: old.atsScore, new_score: next.atsScore, skills_gained: next.skills.filter((s) => !old.skills.includes(s)), new_roles: next.jobRoles.filter((r) => !old.jobRoles.some((x) => x.role === r.role)).map((r) => r.role) }); onProgress?.(); setBusy(false); } return <><PageHeader eyebrow="MODULE 05 / BEFORE & AFTER" title="See your progress clearly." /><div className="module-intro"><p>Compare two versions of your resume to see what changed, what improved, and which new roles opened up.</p></div>{!result ? <><div className="compare-upload"><ResumeDrop label="OLD RESUME" file={oldFile} setFile={setOldFile} /><div className="vs-badge">VS</div><ResumeDrop label="NEW RESUME" file={newFile} setFile={setNewFile} /></div><button className="primary-btn compare-btn" disabled={!oldFile || !newFile || busy} onClick={compare}>{busy ? 'Comparing resumes…' : 'Compare resumes'}<Sparkles size={17} /></button></> : <CompareResult result={result} roadmap={roadmap} reset={() => setResult(null)} profile={profile} go={go} />}</>; }
+function ComparePage({ roadmap, onProgress, go }: { roadmap: RoadmapSkill[]; onProgress?: () => void; go: (module: Module) => void }) { const { user, profile, updateProfile } = useAuth(); const [oldFile, setOldFile] = useState<File | null>(null); const [newFile, setNewFile] = useState<File | null>(null); const [result, setResult] = useState<{ old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> } | null>(null); const [busy, setBusy] = useState(false); async function compare() { if (!oldFile || !newFile || !user) return; setBusy(true); const [{ text: oldText }, { text: newText }, experienceText] = await Promise.all([extractResumeText(oldFile), extractResumeText(newFile), fetchExperienceText(user.id)]); const old = analyzeResumeText(oldText || oldFile.name); const next = analyzeResumeText([newText || newFile.name, experienceText].filter(Boolean).join('\n\n')); setResult({ old, next }); await supabase.from('resume_comparisons').insert({ user_id: user.id, old_score: old.atsScore, new_score: next.atsScore, skills_gained: next.skills.filter((s) => !old.skills.includes(s)), new_roles: next.jobRoles.filter((r) => !old.jobRoles.some((x) => x.role === r.role)).map((r) => r.role) }); await updateProfile({ saved_skills: next.skills }); await syncRoadmap(next.skills, profile?.target_role || 'Full Stack Developer', user.id); onProgress?.(); setBusy(false); } return <><PageHeader eyebrow="MODULE 05 / BEFORE & AFTER" title="See your progress clearly." /><div className="module-intro"><p>Compare two versions of your resume to see what changed, what improved, and which new roles opened up.</p></div>{!result ? <><div className="compare-upload"><ResumeDrop label="OLD RESUME" file={oldFile} setFile={setOldFile} /><div className="vs-badge">VS</div><ResumeDrop label="NEW RESUME" file={newFile} setFile={setNewFile} /></div><button className="primary-btn compare-btn" disabled={!oldFile || !newFile || busy} onClick={compare}>{busy ? 'Comparing resumes…' : 'Compare resumes'}<Sparkles size={17} /></button></> : <CompareResult result={result} roadmap={roadmap} reset={() => setResult(null)} profile={profile} go={go} />}</>; }
 function ResumeDrop({ label, file, setFile }: { label: string; file: File | null; setFile: (f: File | null) => void }) { return <div className="resume-drop"><div className="eyebrow">{label}</div><label className="drop-inner"><div className="upload-icon small"><Upload size={19} /></div><strong>{file ? file.name : 'Choose a resume'}</strong><span>PDF, DOCX or TXT</span><input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label></div>; }
 function CompareResult({ result, roadmap, reset, profile, go }: { result: { old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> }; roadmap: RoadmapSkill[]; reset: () => void; profile: Profile | null; go: (module: Module) => void }) {
   const { user } = useAuth();
@@ -1315,12 +1319,16 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
       <SectionTitle icon={BriefcaseBusiness} title="Job offers you can go for now" action={<span className="muted-label">Based on your updated resume</span>} />
       <p className="missing-intro">Salary shown is that company's full range for the role, not a guaranteed offer at your match%. <TierBadge tier="Mass recruiter" /> / Tier-1 are realistic near-term targets — <TierBadge tier="Dream" /> tiers are stretch goals worth aiming for once you're truly interview-ready.</p>
       <div className="roles-list">
-        {companyMatches.slice(0, 12).map((c) => { const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`); return <div className="role-row" key={c.company}>
+        {companyMatches.slice(0, 12).map((c) => { const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`); const canApply = c.bestMatch.missing.length === 0; return <div className="role-row" key={c.company}>
           <div className="role-rank">{c.bestMatch.matchPct}%</div>
           <div className="role-info"><strong>{c.company}</strong><div className="role-meta"><span>{c.bestMatch.role}</span><TierBadge tier={c.tier} /></div></div>
           <div className="match-track"><div style={{ width: `${c.bestMatch.matchPct}%` }} /></div>
           <div className="role-salary"><small>{c.salaryBand}</small></div>
-          <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button>
+          <div className="role-skill-snippets">
+            {c.bestMatch.have.slice(0, 3).map((skill) => <SkillTag key={skill}>{skill}</SkillTag>)}
+            {c.bestMatch.missing.length > 0 && <span className="role-skill-missing">missing {c.bestMatch.missing.slice(0, 3).join(', ')}{c.bestMatch.missing.length > 3 ? '…' : ''}</span>}
+          </div>
+          {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> : <span className="muted-label">Finish {c.bestMatch.missing.length} more skill{c.bestMatch.missing.length === 1 ? '' : 's'} to apply</span>}
         </div>; })}
       </div>
     </div>}
