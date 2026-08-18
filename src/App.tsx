@@ -315,6 +315,12 @@ function LoadingScreen() {
   return <div className="loading-screen"><div className="loader-mark"><Sparkles size={22} /></div><span>Loading your PathPilot</span></div>;
 }
 
+// Admin account is exempt from every recovery path (email-code sign-in,
+// forgot-password) — one less way for someone who isn't the admin to try to
+// get into it. If this password is ever lost, it has to be reset directly
+// in the Supabase dashboard, not through the app.
+const ADMIN_NO_RECOVERY_EMAIL = 'yagnikchandira.23.cse@iite.indusuni.ac.in';
+
 function AuthScreen() {
   const { signIn, signUp, signInWithEmailOtp, verifyEmailOtp, verifyPasswordResetOtp } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
@@ -323,6 +329,7 @@ function AuthScreen() {
   const [resetOtpSent, setResetOtpSent] = useState(false);
   const [resetOtpCode, setResetOtpCode] = useState('');
   const [email, setEmail] = useState('');
+  const isNoRecoveryAccount = email.trim().toLowerCase() === ADMIN_NO_RECOVERY_EMAIL;
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -361,6 +368,7 @@ function AuthScreen() {
     event.preventDefault();
     setError('');
     if (!isValidEmail(email)) { setError(EMAIL_HELP_TEXT); return; }
+    if (isNoRecoveryAccount) { setError('Password recovery is disabled for this account.'); return; }
     setBusy(true);
     const result = await signInWithEmailOtp(email);
     setBusy(false);
@@ -383,6 +391,7 @@ function AuthScreen() {
     event.preventDefault();
     setError('');
     if (!isValidEmail(email)) { setError(EMAIL_HELP_TEXT); return; }
+    if (isNoRecoveryAccount) { setError('Email-code sign-in is disabled for this account.'); return; }
     setBusy(true);
     const result = await signInWithEmailOtp(email);
     setBusy(false);
@@ -424,33 +433,33 @@ function AuthScreen() {
           <button className="primary-btn full" disabled={busy}>{busy ? 'Verifying…' : 'Verify & continue'}<ArrowRight size={18} /></button>
           <p className="switch-auth"><button type="button" onClick={() => { setResetOtpSent(false); setResetOtpCode(''); setError(''); }}>Use a different email</button></p>
         </form> : <form onSubmit={sendResetOtp} className="auth-form">
-          <label>Email address<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
+          <label>Email address<input required type="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
           {error && <div className="form-alert error"><X size={16} />{error}</div>}
           <button className="primary-btn full" disabled={busy}>{busy ? 'Sending…' : 'Send code'}<ArrowRight size={18} /></button>
         </form>}
         <p className="switch-auth"><button onClick={() => { setForgotMode(false); setResetOtpSent(false); setResetOtpCode(''); setError(''); }}>Back to sign in</button></p>
       </> : <>
         <div className="auth-heading"><div className="eyebrow">YOUR CAREER, CLARIFIED</div><h2>{mode === 'signin' ? 'Welcome back.' : 'Start your journey.'}</h2><p>{mode === 'signin' ? 'Pick up right where you left off.' : 'Create your free workspace in under a minute.'}</p></div>
-        {mode === 'signin' && <div className="auth-method-tabs">
+        {mode === 'signin' && !isNoRecoveryAccount && <div className="auth-method-tabs">
           <button type="button" className={authMethod === 'password' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('password'); setError(''); }}><Lock size={14} /> Password</button>
           <button type="button" className={authMethod === 'otp' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('otp'); setError(''); }}><KeyRound size={14} /> Email code</button>
         </div>}
-        {mode === 'signin' && authMethod === 'otp' ? (
+        {mode === 'signin' && authMethod === 'otp' && !isNoRecoveryAccount ? (
           otpSent ? <form onSubmit={verifyOtpSubmit} className="auth-form">
             <label>Code sent to {email}<input required value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="Enter the code" inputMode="numeric" /></label>
             {error && <div className="form-alert error"><X size={16} />{error}</div>}
             <button className="primary-btn full" disabled={busy}>{busy ? 'Verifying…' : 'Verify & sign in'}<ArrowRight size={18} /></button>
             <p className="switch-auth"><button type="button" onClick={() => { setOtpSent(false); setOtpCode(''); setError(''); }}>Use a different email</button></p>
           </form> : <form onSubmit={sendOtp} className="auth-form">
-            <label>Email address<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
+            <label>Email address<input required type="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
             {error && <div className="form-alert error"><X size={16} />{error}</div>}
             <button className="primary-btn full" disabled={busy}>{busy ? 'Sending…' : 'Send code'}<ArrowRight size={18} /></button>
           </form>
         ) : <form onSubmit={submit} className="auth-form">
           {mode === 'signup' && <label>Full name<input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Aarav Sharma" /></label>}
-          <label>Email address<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
+          <label>Email address<input required type="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
           <label>Password<PasswordInput value={password} onChange={setPassword} placeholder={mode === 'signup' ? 'At least 8 characters' : 'Your password'} showStrength={mode === 'signup'} /></label>
-          {mode === 'signin' && <button type="button" className="forgot-link" onClick={() => { setForgotMode(true); setError(''); setNotice(''); }}>Forgot password?</button>}
+          {mode === 'signin' && !isNoRecoveryAccount && <button type="button" className="forgot-link" onClick={() => { setForgotMode(true); setError(''); setNotice(''); }}>Forgot password?</button>}
           {mode === 'signup' && <label>Phone number<PhoneInput required value={phone} onChange={setPhone} /></label>}
           {error && <div className="form-alert error"><X size={16} />{error}</div>}
           {notice && <div className="form-alert success"><CheckCircle2 size={16} />{notice}</div>}

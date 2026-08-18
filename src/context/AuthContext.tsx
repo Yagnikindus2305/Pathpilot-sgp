@@ -24,6 +24,16 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+// Mobile keyboards frequently auto-capitalize the first letter or leave a
+// trailing space from autocomplete/predictive text — invisible in the input
+// but enough to make the exact string sent to Supabase not match the
+// account, producing "Invalid login credentials" only on phones/tablets,
+// never on a physical keyboard. Every email that reaches Supabase auth goes
+// through this first.
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 // Supabase's backend does the actual sending (via the configured SMTP
 // provider) — this is just our own record that the request was made, for the
 // admin's "Email Activity" view. Best-effort: failure to log never blocks auth.
@@ -131,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // whether email confirmation is on (i.e. even with no session yet). The
     // on_auth_user_created trigger reads it from there to create the profiles row,
     // so there's no session-dependent write to the profiles table on this path.
+    email = normalizeEmail(email);
     const { error } = await supabase.auth.signUp({
       email,
       password,
@@ -142,7 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email: normalizeEmail(email), password });
     if (error) return { error: error.message };
     await revokeOtherSessions();
     return { error: null };
@@ -195,6 +206,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // it's hosted somewhere public; until then this falls back to the current
     // origin so local dev keeps working, but real reset emails need the env var.
     const redirectTo = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined) || window.location.origin;
+    email = normalizeEmail(email);
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
     await logEmailEvent(email, 'password_reset', !error);
     if (error) return { error: error.message };
@@ -216,6 +228,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // no existing account errors out instead of silently creating a blank one.
   // Uses Supabase's own auth email sending, so no external provider is needed.
   async function signInWithEmailOtp(email: string) {
+    email = normalizeEmail(email);
     const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
     await logEmailEvent(email, 'otp_code', !error);
     if (error) return { error: error.message };
@@ -223,7 +236,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function verifyEmailOtp(email: string, token: string) {
-    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+    const { error } = await supabase.auth.verifyOtp({ email: normalizeEmail(email), token: token.trim(), type: 'email' });
     if (error) return { error: error.message };
     await revokeOtherSessions();
     return { error: null };
@@ -235,7 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // the link-based flow uses instead of dropping them straight into the app
   // like a normal OTP sign-in would.
   async function verifyPasswordResetOtp(email: string, token: string) {
-    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' });
+    const { error } = await supabase.auth.verifyOtp({ email: normalizeEmail(email), token: token.trim(), type: 'email' });
     if (error) return { error: error.message };
     setPasswordRecovery(true);
     return { error: null };
