@@ -1,7 +1,7 @@
 ﻿import { createContext, Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
-  ArrowRight, BarChart3, BookOpen, BriefcaseBusiness, Check, CheckCircle2, ChevronRight, Circle,
-  Compass, Eye, EyeOff, FileSearch, FileText, GraduationCap, KeyRound, LayoutDashboard, Linkedin, Lock, LogOut,
+  ArrowRight, BarChart3, BookOpen, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, ChevronRight, Circle,
+  Compass, Download, Eye, EyeOff, FileSearch, FileText, GraduationCap, KeyRound, LayoutDashboard, Linkedin, Lock, LogOut,
   Mail, Menu, MessageCircle, Moon, Pencil, Play, Plus, Shield, ShieldCheck, Sparkles, Sun, Target,
   TrendingUp, Trash2, Trophy, Upload, UserRound, X, Zap,
 } from 'lucide-react';
@@ -1005,6 +1005,9 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
   const [toolCoverage, setToolCoverage] = useState<ToolCheckItem[]>([]);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatch[]>([]);
   const [appliedKeys, setAppliedKeys] = useState<string[]>([]);
+  const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
+  const [expandedRole, setExpandedRole] = useState<string | null>(null);
+  const [showAllRoles, setShowAllRoles] = useState(false);
 
   useEffect(() => { if (user) getApplications(user.id).then((apps) => setAppliedKeys(apps.map((a) => `${a.company}::${a.role}`))); }, [user]);
 
@@ -1030,6 +1033,68 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
       .catch(() => { if (!cancelled) setCompanyMatches([]); });
     return () => { cancelled = true; };
   }, [analysis.skills, targetRole, profile?.target_roles]);
+
+  // Companies hire under their own job titles (e.g. "Security Engineer"),
+  // which rarely match our 40-role curated catalog names 1:1 (e.g.
+  // "Cybersecurity Analyst") — so instead of forcing them under a
+  // Matched-Job-Role card by exact name (which would silently match almost
+  // nothing), every company posting in the same domain is grouped into one
+  // unified card per its own role title, shown right alongside Matched Job
+  // Roles rather than as scattered, disconnected single-company rows.
+  const roleGroupedCompanies = useMemo(() => {
+    const map = new Map<string, CompanyMatch[]>();
+    for (const c of companyMatches) {
+      const key = c.bestMatch.role;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return Array.from(map.entries()).sort((a, b) => Math.max(...b[1].map((c) => c.bestMatch.matchPct)) - Math.max(...a[1].map((c) => c.bestMatch.matchPct)));
+  }, [companyMatches]);
+
+  function renderHiringRow(c: CompanyMatch) {
+    const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`);
+    const canApply = c.bestMatch.missing.length === 0;
+    const expanded = expandedCompany === `${c.company}::${c.bestMatch.role}`;
+    const rowKey = `${c.company}::${c.bestMatch.role}`;
+    return <div className="hiring-row" key={rowKey}>
+      <div className="hiring-row-top"><strong>{c.company}</strong><TierBadge tier={c.tier} /><span className="matched-role-pct-mini">{c.bestMatch.matchPct}%</span></div>
+      <div className="hiring-row-meta"><span>{c.salaryBand}</span></div>
+      <div className="hiring-row-foot">
+        {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> :
+          <button type="button" className={expanded ? 'role-skill-missing-btn open' : 'role-skill-missing-btn'} onClick={() => setExpandedCompany(expanded ? null : rowKey)}>
+            Finish {c.bestMatch.missing.length} skill{c.bestMatch.missing.length === 1 ? '' : 's'} <ChevronDown size={11} />
+          </button>}
+      </div>
+      {expanded && c.bestMatch.missing.length > 0 && <div className="role-skill-detail nested">
+        <div className="tag-cloud">{c.bestMatch.missing.map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>)}</div>
+        <p className="role-skill-detail-note">Complete these on your <button type="button" className="text-link" onClick={() => go('roadmap')}>Skill Roadmap</button>, then come back here to apply.</p>
+      </div>}
+    </div>;
+  }
+
+  // Condensed card for every role beyond the top 6 full cards above — same
+  // tier/match%/missing-skills scan pattern as the company hiring rows, so
+  // the full role catalog stays reachable without a wall of large cards.
+  function renderRoleRow(role: (typeof relevantJobRoles)[number]) {
+    const req = ROLE_SKILLS[role.role];
+    const allReq = req ? [...req.must, ...req.nice, ...req.advanced] : [];
+    const missingForRole = allReq.filter((skill) => !analysis.skills.includes(skill));
+    const tier = roleTierFromSalary(role.salary_avg);
+    const expanded = expandedRole === role.role;
+    return <div className="hiring-row" key={role.role}>
+      <div className="hiring-row-top"><strong>{role.role}</strong><span className={`tier-badge ${tier.badgeClass}`}>{tier.label}</span><span className="matched-role-pct-mini">{role.match}%</span></div>
+      <div className="hiring-row-meta"><span>₹{role.salary_min}–{role.salary_max} LPA</span></div>
+      <div className="hiring-row-foot">
+        <button type="button" className={expanded ? 'role-skill-missing-btn open' : 'role-skill-missing-btn'} onClick={() => setExpandedRole(expanded ? null : role.role)}>
+          {missingForRole.length} missing <ChevronDown size={11} />
+        </button>
+      </div>
+      {expanded && <div className="role-skill-detail nested">
+        <div className="tag-cloud">{missingForRole.length ? missingForRole.map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>) : <span className="muted-label">You already have every skill for this role.</span>}</div>
+        <button type="button" className="primary-btn full" onClick={async () => { await updateProfile({ target_role: role.role }); go('roadmap'); }}><Target size={15} /> Set as Target &amp; View Roadmap</button>
+      </div>}
+    </div>;
+  }
 
   return <>
     <div className="result-top">
@@ -1089,6 +1154,10 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
           </div>;
         })}
       </div>
+      {relevantJobRoles.length > 6 && <div className="matched-roles-extra">
+        <button type="button" className="text-link" onClick={() => setShowAllRoles(!showAllRoles)}>{showAllRoles ? 'Show fewer roles' : `Show all ${relevantJobRoles.length} matched roles`} <ChevronDown size={12} /></button>
+        {showAllRoles && <div className="hiring-grid">{relevantJobRoles.slice(6).map(renderRoleRow)}</div>}
+      </div>}
       <div className="roles-footer">
         <p>Set a role as your target to open its full roadmap with exact missing skills.</p>
       </div>
@@ -1102,24 +1171,14 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
       </div>
     </div>
 
-    {companyMatches.length > 0 && <div className="content-card company-match-card">
-      <SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your detected skills</span>} />
+    {roleGroupedCompanies.length > 0 && <div className="content-card company-match-card">
+      <SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Grouped by role</span>} />
       <p className="missing-intro">Salary shown is that company's full range for the role, not a guaranteed offer at your match%. <TierBadge tier="Mass recruiter" /> / Tier-1 are realistic near-term targets — <TierBadge tier="Dream" /> tiers are stretch goals worth aiming for once you're truly interview-ready.</p>
-      <div className="roles-list">
-        {companyMatches.slice(0, 12).map((c) => { const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`); const canApply = c.bestMatch.missing.length === 0; return <div className="role-row" key={c.company}>
-          <div className="role-rank">{c.bestMatch.matchPct}%</div>
-          <div className="role-info">
-            <strong>{c.company}</strong>
-            <div className="role-meta"><span>{c.bestMatch.role}</span><TierBadge tier={c.tier} /></div>
-          </div>
-          <div className="match-track"><div style={{ width: `${c.bestMatch.matchPct}%` }} /></div>
-          <div className="role-salary"><small>{c.salaryBand}</small></div>
-          <div className="role-skill-snippets">
-            {c.bestMatch.have.slice(0, 3).map((skill) => <SkillTag key={skill}>{skill}</SkillTag>)}
-            {c.bestMatch.missing.length > 0 && <span className="role-skill-missing">missing {c.bestMatch.missing.slice(0, 3).join(', ')}{c.bestMatch.missing.length > 3 ? '…' : ''}</span>}
-          </div>
-          {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> : <span className="muted-label">Finish {c.bestMatch.missing.length} more skill{c.bestMatch.missing.length === 1 ? '' : 's'} to apply</span>}
-        </div>; })}
+      <div className="role-group-list">
+        {roleGroupedCompanies.map(([roleName, companies]) => <div className="role-group" key={roleName}>
+          <div className="role-group-head"><strong>{roleName}</strong><span className="muted-label">{companies.length} compan{companies.length === 1 ? 'y' : 'ies'} hiring</span></div>
+          <div className="hiring-grid">{companies.map(renderHiringRow)}</div>
+        </div>)}
       </div>
     </div>}
     <div className="next-banner"><div className="banner-icon"><Target size={20} /></div><div><strong>Know your gaps? Time to close them.</strong><p>Head to your skill roadmap to see exactly what to learn next, with a video for each skill.</p></div><button onClick={() => go('roadmap')}>Go to Skill Roadmap <ArrowRight size={16} /></button></div>
@@ -1189,6 +1248,59 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
     return () => { cancelled = true; };
   }, [user, profile?.saved_skills, profile?.target_role, skills]);
 
+  // Powers "Generate updated resume" below — the original resume's own
+  // detected skills are the baseline everything else gets diffed against, so
+  // the generated doc can call out which skills are newly learned instead of
+  // silently blending them in.
+  const [latestResume, setLatestResume] = useState<{ file_name: string; raw_text: string | null; skills: string[] } | null>(null);
+  useEffect(() => {
+    if (!user) { setLatestResume(null); return; }
+    let cancelled = false;
+    supabase.from('resume_analyses').select('file_name, raw_text, skills').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { if (!cancelled) setLatestResume(data as typeof latestResume); });
+    return () => { cancelled = true; };
+  }, [user]);
+
+  function generateResume() {
+    if (!user) return;
+    const doneRoadmapSkills = skills.filter((s) => s.done).map((s) => s.skill_name);
+    const originalSkills = latestResume?.skills || [];
+    const allSkills = Array.from(new Set([...(profile?.saved_skills || originalSkills), ...doneRoadmapSkills]));
+    const originalSet = new Set(originalSkills);
+    const newlyLearned = allSkills.filter((s) => !originalSet.has(s));
+    const existingSkills = allSkills.filter((s) => originalSet.has(s));
+
+    const lines: string[] = [];
+    lines.push(profile?.full_name || 'Your Name');
+    lines.push([role, profile?.college, profile?.course].filter(Boolean).join(' | '));
+    if (user.email) lines.push(user.email);
+    lines.push('');
+    lines.push('SKILLS');
+    lines.push('-'.repeat(40));
+    if (existingSkills.length) lines.push(existingSkills.join(', '));
+    if (newlyLearned.length) {
+      lines.push('');
+      lines.push(`Recently learned via PathPilot roadmap: ${newlyLearned.join(', ')}`);
+    }
+    if (!existingSkills.length && !newlyLearned.length) lines.push('No skills detected yet.');
+    if (latestResume?.raw_text) {
+      lines.push('');
+      lines.push('ORIGINAL RESUME CONTENT');
+      lines.push('-'.repeat(40));
+      lines.push(latestResume.raw_text);
+    }
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${(profile?.full_name || 'pathpilot').replace(/\s+/g, '_')}_updated_resume.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   const done = skills.filter((x) => x.done).length;
   async function toggle(skill: RoadmapSkill & { video?: string }) {
     const next = !skill.done;
@@ -1208,7 +1320,7 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
     onProgress?.();
   }
 
-  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {role}{aiRole && <span className="ai-badge">AI-matched</span>}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">{aiLoading ? `Looking up skills for "${role}" with AI…` : 'Preparing your personalized roadmap…'}</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong></div><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>)}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div><div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
+  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {role}{aiRole && <span className="ai-badge">AI-matched</span>}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">{aiLoading ? `Looking up skills for "${role}" with AI…` : 'Preparing your personalized roadmap…'}</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong></div><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>)}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}{skills.length > 0 && <div className="content-card resume-generate-card"><SectionTitle icon={FileText} title="Updated resume" action={<span className="muted-label">{done} of {skills.length} skills covered</span>} /><p className="missing-intro">{done === skills.length ? "You've completed every skill on this roadmap — generate a fresh resume with everything you've learned, ready to send out." : "Generate a resume any time — it folds in every roadmap skill you've completed so far, layered on top of your original resume."}</p><button type="button" className="primary-btn" onClick={generateResume} disabled={!latestResume}><Download size={16} /> Generate updated resume</button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div><div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
 }
 
 const questions = QUESTIONS;
@@ -1320,13 +1432,21 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
     function handleVisibility() { if (document.hidden) onSubmit('You switched tabs or minimized the window.'); }
     function handleBlur() { onSubmit('You switched to another window or application.'); }
     function handleCopy(e: ClipboardEvent) { e.preventDefault(); onSubmit('Copying was detected during the test.'); }
+    // The PrintScreen key captures to the clipboard without ever blurring or
+    // hiding the page, so it's invisible to the three listeners above — this
+    // is the one screenshot path a plain "switched away" check can't catch.
+    // Windows' own Snip & Sketch (Win+Shift+S) still hands focus to its
+    // overlay first, so that path is already covered by handleBlur.
+    function handleKeyDown(e: KeyboardEvent) { if (e.key === 'PrintScreen') onSubmit('A screenshot was attempted during the test.'); }
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('blur', handleBlur);
     document.addEventListener('copy', handleCopy);
+    window.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleBlur);
       document.removeEventListener('copy', handleCopy);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [submitted, onSubmit]);
 
@@ -1338,7 +1458,7 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
 function ComparePage({ roadmap, onProgress, go }: { roadmap: RoadmapSkill[]; onProgress?: () => void; go: (module: Module) => void }) { const { user, profile, updateProfile, session } = useAuth(); const [oldFile, setOldFile] = useState<File | null>(null); const [newFile, setNewFile] = useState<File | null>(null); const [result, setResult] = useState<{ old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> } | null>(null); const [busy, setBusy] = useState(false); async function compare() { if (!oldFile || !newFile || !user) return; setBusy(true); const [{ text: oldText }, { text: newText }, experienceText] = await Promise.all([extractResumeText(oldFile), extractResumeText(newFile), fetchExperienceText(user.id)]); const old = analyzeResumeText(oldText || oldFile.name); const oldCombinedText = oldText || oldFile.name; const newCombinedText = [newText || newFile.name, experienceText].filter(Boolean).join('\n\n'); const next = analyzeResumeText(newCombinedText); setResult({ old, next }); await supabase.from('resume_comparisons').insert({ user_id: user.id, old_score: old.atsScore, new_score: next.atsScore, skills_gained: next.skills.filter((s) => !old.skills.includes(s)), new_roles: next.jobRoles.filter((r) => !old.jobRoles.some((x) => x.role === r.role)).map((r) => r.role) }); await Promise.all([oldFile, newFile].map(async (f, i) => { const isOld = i === 0; const a = isOld ? old : next; const text = isOld ? oldCombinedText : newCombinedText; const storagePath = `${user.id}/${Date.now()}-${i}-${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`; const { error: uploadError } = await supabase.storage.from('resumes').upload(storagePath, f); await supabase.from('resume_analyses').insert({ user_id: user.id, file_name: f.name, ats_score: a.atsScore, skills: a.skills, job_roles: a.jobRoles, raw_text: text, file_path: uploadError ? null : storagePath }); })); await updateProfile({ saved_skills: next.skills }); await syncRoadmap(next.skills, profile?.target_role || 'Full Stack Developer', user.id); if (user.email) await logActivity(user.email, 'resume_compared', session?.access_token); onProgress?.(); setBusy(false); } return <><PageHeader eyebrow="MODULE 05 / BEFORE & AFTER" title="See your progress clearly." /><div className="module-intro"><p>Compare two versions of your resume to see what changed, what improved, and which new roles opened up.</p></div>{!result ? <><div className="compare-upload"><ResumeDrop label="OLD RESUME" file={oldFile} setFile={setOldFile} /><div className="vs-badge">VS</div><ResumeDrop label="NEW RESUME" file={newFile} setFile={setNewFile} /></div><button className="primary-btn compare-btn" disabled={!oldFile || !newFile || busy} onClick={compare}>{busy ? 'Comparing resumes…' : 'Compare resumes'}<Sparkles size={17} /></button></> : <CompareResult result={result} roadmap={roadmap} reset={() => setResult(null)} profile={profile} go={go} />}</>; }
 function ResumeDrop({ label, file, setFile }: { label: string; file: File | null; setFile: (f: File | null) => void }) { return <div className="resume-drop"><div className="eyebrow">{label}</div><label className="drop-inner"><div className="upload-icon small"><Upload size={19} /></div><strong>{file ? file.name : 'Choose a resume'}</strong><span>PDF, DOCX or TXT</span><input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label></div>; }
 function CompareResult({ result, roadmap, reset, profile, go }: { result: { old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> }; roadmap: RoadmapSkill[]; reset: () => void; profile: Profile | null; go: (module: Module) => void }) {
-  const { user, session } = useAuth();
+  const { user, session, updateProfile } = useAuth();
   const gained = result.next.skills.filter((s) => !result.old.skills.includes(s));
   const unlockedRoles = result.next.jobRoles.filter((r) => !result.old.jobRoles.some((x) => x.role === r.role));
   // Same fix as Resume Analysis's Matched Job Roles: once a target role is
@@ -1353,6 +1473,19 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
   }, [unlockedRoles, profile?.target_role]);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatch[]>([]);
   const [appliedKeys, setAppliedKeys] = useState<string[]>([]);
+  const [expandedCompany, setExpandedCompany] = useState<string | null>(null);
+  const [expandedRole, setExpandedRole] = useState<string | null>(null);
+  const [showAllRoles, setShowAllRoles] = useState(false);
+  // Same lane-filtering as Resume Analysis's Matched Job Roles, but over the
+  // full current role list (not just the diff), so companies below have a
+  // broad, relevant set of role cards to nest under.
+  const relevantJobRoles = useMemo(() => {
+    if (!profile?.target_role) return result.next.jobRoles;
+    const category = getCategoryForRole(profile.target_role);
+    if (!category) return result.next.jobRoles;
+    const filtered = result.next.jobRoles.filter((r) => getCategoryForRole(r.role) === category);
+    return filtered.length >= 3 ? filtered : result.next.jobRoles;
+  }, [result.next.jobRoles, profile?.target_role]);
   const targetRoles = useMemo(
     () => [profile?.target_role, ...(profile?.target_roles || [])].filter((r): r is string => Boolean(r)),
     [profile?.target_role, profile?.target_roles],
@@ -1388,6 +1521,66 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
     window.open(link, '_blank', 'noopener');
   }
 
+  // See ResumeResult's identical comment: company job titles (e.g. "Security
+  // Engineer") don't line up with the curated 40-role catalog names (e.g.
+  // "Cybersecurity Analyst"), so companies are grouped by their own role
+  // title into one unified card per title rather than forced under a
+  // same-named Matched Job Role card.
+  const roleGroupedCompanies = useMemo(() => {
+    const map = new Map<string, CompanyMatch[]>();
+    for (const c of companyMatches) {
+      const key = c.bestMatch.role;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return Array.from(map.entries()).sort((a, b) => Math.max(...b[1].map((c) => c.bestMatch.matchPct)) - Math.max(...a[1].map((c) => c.bestMatch.matchPct)));
+  }, [companyMatches]);
+
+  function renderHiringRow(c: CompanyMatch) {
+    const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`);
+    const canApply = c.bestMatch.missing.length === 0;
+    const rowKey = `${c.company}::${c.bestMatch.role}`;
+    const expanded = expandedCompany === rowKey;
+    return <div className="hiring-row" key={rowKey}>
+      <div className="hiring-row-top"><strong>{c.company}</strong><TierBadge tier={c.tier} /><span className="matched-role-pct-mini">{c.bestMatch.matchPct}%</span></div>
+      <div className="hiring-row-meta"><span>{c.salaryBand}</span></div>
+      <div className="hiring-row-foot">
+        {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> :
+          <button type="button" className={expanded ? 'role-skill-missing-btn open' : 'role-skill-missing-btn'} onClick={() => setExpandedCompany(expanded ? null : rowKey)}>
+            Finish {c.bestMatch.missing.length} skill{c.bestMatch.missing.length === 1 ? '' : 's'} <ChevronDown size={11} />
+          </button>}
+      </div>
+      {expanded && c.bestMatch.missing.length > 0 && <div className="role-skill-detail nested">
+        <div className="tag-cloud">{c.bestMatch.missing.map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>)}</div>
+        <p className="role-skill-detail-note">Complete these on your <button type="button" className="text-link" onClick={() => go('roadmap')}>Skill Roadmap</button>, then come back here to apply.</p>
+      </div>}
+    </div>;
+  }
+
+  // Condensed card for every role beyond the top 6 full cards above — same
+  // tier/match%/missing-skills scan pattern as the company hiring rows, so
+  // the full role catalog stays reachable without a wall of large cards.
+  function renderRoleRow(role: (typeof relevantJobRoles)[number]) {
+    const req = ROLE_SKILLS[role.role];
+    const allReq = req ? [...req.must, ...req.nice, ...req.advanced] : [];
+    const missingForRole = allReq.filter((skill) => !result.next.skills.includes(skill));
+    const tier = roleTierFromSalary(role.salary_avg);
+    const expanded = expandedRole === role.role;
+    return <div className="hiring-row" key={role.role}>
+      <div className="hiring-row-top"><strong>{role.role}</strong><span className={`tier-badge ${tier.badgeClass}`}>{tier.label}</span><span className="matched-role-pct-mini">{role.match}%</span></div>
+      <div className="hiring-row-meta"><span>₹{role.salary_min}–{role.salary_max} LPA</span></div>
+      <div className="hiring-row-foot">
+        <button type="button" className={expanded ? 'role-skill-missing-btn open' : 'role-skill-missing-btn'} onClick={() => setExpandedRole(expanded ? null : role.role)}>
+          {missingForRole.length} missing <ChevronDown size={11} />
+        </button>
+      </div>
+      {expanded && <div className="role-skill-detail nested">
+        <div className="tag-cloud">{missingForRole.length ? missingForRole.map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>) : <span className="muted-label">You already have every skill for this role.</span>}</div>
+        <button type="button" className="primary-btn full" onClick={async () => { await updateProfile({ target_role: role.role }); go('roadmap'); }}><Target size={15} /> Set as Target &amp; View Roadmap</button>
+      </div>}
+    </div>;
+  }
+
   return <>
     <div className="compare-result-head"><div><div className="eyebrow success-text"><CheckCircle2 size={14} /> COMPARISON COMPLETE</div><h2>Your growth, side by side.</h2></div><button className="secondary-btn" onClick={reset}><Plus size={16} /> New comparison</button></div>
     <div className="compare-score-grid"><div className="compare-score"><span>Before</span><ProgressRing score={result.old.atsScore} size={128} /></div><div className="compare-arrow"><ArrowRight size={24} /><strong>+{result.next.atsScore - result.old.atsScore} pts</strong></div><div className="compare-score improved"><span>After</span><ProgressRing score={result.next.atsScore} size={128} /></div></div>
@@ -1398,21 +1591,42 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
         <div><h3>New roles unlocked <span>{roles.length}</span></h3>{roles.length ? roles.map((x) => <div className="unlocked-role" key={x.role}><CheckCircle2 size={16} /><div><strong>{x.role}</strong><span>{x.match}% match · ₹{x.salary_min}–{x.salary_max} LPA</span></div></div>) : <p className="muted">Your current matches are still strengthening.</p>}</div>
       </div>
     </div>
-    {companyMatches.length > 0 && <div className="content-card company-match-card">
-      <SectionTitle icon={BriefcaseBusiness} title="Job offers you can go for now" action={<span className="muted-label">Based on your updated resume</span>} />
+    {relevantJobRoles.length > 0 && <div className="content-card roles-card">
+      <SectionTitle icon={Target} title="Matched Job Roles" action={<span className="muted-label">Based on your updated resume</span>} />
+      <div className="matched-roles-grid">
+        {relevantJobRoles.slice(0, 6).map((role) => {
+          const req = ROLE_SKILLS[role.role];
+          const allReq = req ? [...req.must, ...req.nice, ...req.advanced] : [];
+          const owned = allReq.filter((skill) => result.next.skills.includes(skill));
+          const missingForRole = allReq.filter((skill) => !result.next.skills.includes(skill));
+          const tier = roleTierFromSalary(role.salary_avg);
+          const level = matchLevel(role.match);
+          return <div className="matched-role-card" key={role.role}>
+            <div className="matched-role-head">
+              <div><strong>{role.role}</strong><span className={`tier-badge ${tier.badgeClass}`}>{tier.label}</span></div>
+              <div className={`matched-role-pct ${level}`}>{role.match}%<small>match</small></div>
+            </div>
+            <div className="matched-role-salary">₹{role.salary_min}–{role.salary_max} LPA</div>
+            <div className={`match-track ${level}`}><div style={{ width: `${role.match}%` }} /></div>
+            {owned.length > 0 && <div><span className="matched-role-skills-label">You have ({owned.length})</span><div className="tag-cloud">{owned.slice(0, 5).map((skill) => <SkillTag green key={skill}>{skill}</SkillTag>)}{owned.length > 5 && <span className="muted-label">+{owned.length - 5} more</span>}</div></div>}
+            {missingForRole.length > 0 && <div><span className="matched-role-skills-label missing">Missing ({missingForRole.length})</span><div className="tag-cloud">{missingForRole.slice(0, 5).map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>)}{missingForRole.length > 5 && <span className="muted-label">+{missingForRole.length - 5} more</span>}</div></div>}
+            <button type="button" className="primary-btn full" onClick={async () => { await updateProfile({ target_role: role.role }); go('roadmap'); }}><Target size={15} /> Set as Target &amp; View Roadmap</button>
+          </div>;
+        })}
+      </div>
+      {relevantJobRoles.length > 6 && <div className="matched-roles-extra">
+        <button type="button" className="text-link" onClick={() => setShowAllRoles(!showAllRoles)}>{showAllRoles ? 'Show fewer roles' : `Show all ${relevantJobRoles.length} matched roles`} <ChevronDown size={12} /></button>
+        {showAllRoles && <div className="hiring-grid">{relevantJobRoles.slice(6).map(renderRoleRow)}</div>}
+      </div>}
+    </div>}
+    {roleGroupedCompanies.length > 0 && <div className="content-card company-match-card">
+      <SectionTitle icon={BriefcaseBusiness} title="Job offers you can go for now" action={<span className="muted-label">Grouped by role</span>} />
       <p className="missing-intro">Salary shown is that company's full range for the role, not a guaranteed offer at your match%. <TierBadge tier="Mass recruiter" /> / Tier-1 are realistic near-term targets — <TierBadge tier="Dream" /> tiers are stretch goals worth aiming for once you're truly interview-ready.</p>
-      <div className="roles-list">
-        {companyMatches.slice(0, 12).map((c) => { const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`); const canApply = c.bestMatch.missing.length === 0; return <div className="role-row" key={c.company}>
-          <div className="role-rank">{c.bestMatch.matchPct}%</div>
-          <div className="role-info"><strong>{c.company}</strong><div className="role-meta"><span>{c.bestMatch.role}</span><TierBadge tier={c.tier} /></div></div>
-          <div className="match-track"><div style={{ width: `${c.bestMatch.matchPct}%` }} /></div>
-          <div className="role-salary"><small>{c.salaryBand}</small></div>
-          <div className="role-skill-snippets">
-            {c.bestMatch.have.slice(0, 3).map((skill) => <SkillTag key={skill}>{skill}</SkillTag>)}
-            {c.bestMatch.missing.length > 0 && <span className="role-skill-missing">missing {c.bestMatch.missing.slice(0, 3).join(', ')}{c.bestMatch.missing.length > 3 ? '…' : ''}</span>}
-          </div>
-          {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> : <span className="muted-label">Finish {c.bestMatch.missing.length} more skill{c.bestMatch.missing.length === 1 ? '' : 's'} to apply</span>}
-        </div>; })}
+      <div className="role-group-list">
+        {roleGroupedCompanies.map(([roleName, companies]) => <div className="role-group" key={roleName}>
+          <div className="role-group-head"><strong>{roleName}</strong><span className="muted-label">{companies.length} compan{companies.length === 1 ? 'y' : 'ies'} hiring</span></div>
+          <div className="hiring-grid">{companies.map(renderHiringRow)}</div>
+        </div>)}
       </div>
     </div>}
     <div className="next-banner"><div className="banner-icon"><LayoutDashboard size={20} /></div><div><strong>You're all caught up here.</strong><p>Head to your dashboard to see this progress reflected everywhere.</p></div><button onClick={() => go('dashboard')}>Continue to Dashboard <ArrowRight size={16} /></button></div>
