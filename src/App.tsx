@@ -585,17 +585,19 @@ function RadarChart({ data, size = 240 }: { data: { label: string; value: number
 
 // A real line/area chart driven by actual resume-history data points —
 // replaces the old "Skill growth over time" bar chart, which hardcoded five
-// of its six bar heights regardless of the real user (only the very last
-// bar reflected anything real). Point values are whatever the caller
-// measures (skill count, ATS score, etc.); label is the short date shown
-// under each point.
-function SkillGrowthChart({ points, height = 168 }: { points: { label: string; value: number }[]; height?: number }) {
+// of its six bar heights regardless of the real user. Value labels aren't
+// drawn on every point anymore (with a couple dozen resumes those collided
+// into an unreadable mess) — click or tap a point to see exactly what it
+// means: its value, date, and an optional detail string (e.g. the resume
+// file name), shown in a small card below the chart.
+function SkillGrowthChart({ points, height = 168 }: { points: { label: string; value: number; detail?: string }[]; height?: number }) {
   const gradId = useId();
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
   if (points.length === 0) {
     return <div className="empty-state growth-chart-empty">Analyze a resume to start tracking growth here.</div>;
   }
   const width = 560;
-  const padTop = 16;
+  const padTop = 20;
   const padBottom = 26;
   const padX = 12;
   const chartW = width - padX * 2;
@@ -609,21 +611,35 @@ function SkillGrowthChart({ points, height = 168 }: { points: { label: string; v
   }));
   const linePath = coords.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
   const areaPath = `${linePath} L ${coords[coords.length - 1].x.toFixed(1)} ${padTop + chartH} L ${coords[0].x.toFixed(1)} ${padTop + chartH} Z`;
-  return <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="growth-line-chart" preserveAspectRatio="none">
-    <defs>
-      <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor="#4d69db" stopOpacity="0.32" />
-        <stop offset="100%" stopColor="#4d69db" stopOpacity="0" />
-      </linearGradient>
-    </defs>
-    <path d={areaPath} fill={`url(#${gradId})`} />
-    <path d={linePath} fill="none" stroke="#3b5bdb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-    {coords.map((c, i) => <g key={i}>
-      <circle cx={c.x} cy={c.y} r="4" className="growth-chart-dot" />
-      <text x={c.x} y={height - 6} textAnchor="middle" className="growth-chart-label">{c.label}</text>
-      <text x={c.x} y={Math.max(12, c.y - 10)} textAnchor="middle" className="growth-chart-value">{c.value}</text>
-    </g>)}
-  </svg>;
+  // Thin the date labels under the axis to at most ~8, however many points
+  // there are — a chart with two dozen resumes would otherwise print two
+  // dozen overlapping dates.
+  const labelEvery = Math.max(1, Math.ceil(points.length / 8));
+  const active = activeIndex != null ? coords[activeIndex] : null;
+  return <div className="growth-chart-wrap">
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="growth-line-chart" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#4d69db" stopOpacity="0.32" />
+          <stop offset="100%" stopColor="#4d69db" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} />
+      <path d={linePath} fill="none" stroke="#3b5bdb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      {coords.map((c, i) => <g key={i}>
+        {i % labelEvery === 0 && <text x={c.x} y={height - 6} textAnchor="middle" className="growth-chart-label">{c.label}</text>}
+        <circle
+          cx={c.x} cy={c.y} r={activeIndex === i ? 6 : 4}
+          className={activeIndex === i ? 'growth-chart-dot active' : 'growth-chart-dot'}
+          onClick={() => setActiveIndex(activeIndex === i ? null : i)}
+          onMouseEnter={() => setActiveIndex(i)}
+        />
+      </g>)}
+    </svg>
+    <div className="growth-chart-tooltip">
+      {active ? <><strong>{active.value} skill{active.value === 1 ? '' : 's'} detected</strong><span>{active.detail || active.label}</span></> : <span className="muted-label">Click a point on the line to see what it means.</span>}
+    </div>
+  </div>;
 }
 
 function ProgressRing({ score, size = 150 }: { score: number; size?: number }) { const radius = (size - 16) / 2; const circumference = 2 * Math.PI * radius; return <div className="progress-ring" style={{ width: size, height: size }}><svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}><circle className="ring-track" cx={size / 2} cy={size / 2} r={radius} /><circle className="ring-value" cx={size / 2} cy={size / 2} r={radius} style={{ strokeDasharray: circumference, strokeDashoffset: circumference - (score / 100) * circumference }} /></svg><div className="ring-label"><strong>{score}</strong><span>/ 100</span></div></div>; }
@@ -759,7 +775,7 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   // Real data point per resume analysis — skills detected at that point in
   // time — instead of the old chart's five hardcoded bar heights that never
   // reflected anything about the actual account.
-  const growthPoints = resumeHistory.map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length }));
+  const growthPoints = resumeHistory.map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length, detail: `${r.file_name} · ${new Date(r.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}` }));
   const roadmapDone = roadmap.length > 0 && roadmap.every((x) => x.done);
   const aptitudePassed = results.some((r) => r.score / Math.max(r.total, 1) >= .7);
   const appliedCount = applications.length;
@@ -1781,7 +1797,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
     {loading ? <div className="empty-state">Loading user data…</div> : <>
       <div className="content-card">
         <SectionTitle icon={FileText} title="Resume history" action={<span className="muted-label">{resumes.length} analysis{resumes.length === 1 ? '' : 'es'}</span>} />
-        {resumes.length > 1 && <SkillGrowthChart points={[...resumes].reverse().map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length }))} />}
+        {resumes.length > 1 && <SkillGrowthChart points={[...resumes].reverse().map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length, detail: `${r.file_name} · ${new Date(r.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}` }))} />}
         {resumes.length ? <div className="admin-resume-history">
           {resumes.map((r, i) => <div className="admin-resume-entry" key={r.id}>
             <div className="admin-resume-entry-head">
