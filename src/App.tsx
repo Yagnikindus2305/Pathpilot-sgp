@@ -583,6 +583,49 @@ function RadarChart({ data, size = 240 }: { data: { label: string; value: number
   </svg>;
 }
 
+// A real line/area chart driven by actual resume-history data points —
+// replaces the old "Skill growth over time" bar chart, which hardcoded five
+// of its six bar heights regardless of the real user (only the very last
+// bar reflected anything real). Point values are whatever the caller
+// measures (skill count, ATS score, etc.); label is the short date shown
+// under each point.
+function SkillGrowthChart({ points, height = 168 }: { points: { label: string; value: number }[]; height?: number }) {
+  const gradId = useId();
+  if (points.length === 0) {
+    return <div className="empty-state growth-chart-empty">Analyze a resume to start tracking growth here.</div>;
+  }
+  const width = 560;
+  const padTop = 16;
+  const padBottom = 26;
+  const padX = 12;
+  const chartW = width - padX * 2;
+  const chartH = height - padTop - padBottom;
+  const max = Math.max(...points.map((p) => p.value), 1);
+  const stepX = points.length > 1 ? chartW / (points.length - 1) : 0;
+  const coords = points.map((p, i) => ({
+    x: points.length > 1 ? padX + i * stepX : width / 2,
+    y: padTop + chartH - (p.value / max) * chartH,
+    ...p,
+  }));
+  const linePath = coords.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L ${coords[coords.length - 1].x.toFixed(1)} ${padTop + chartH} L ${coords[0].x.toFixed(1)} ${padTop + chartH} Z`;
+  return <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="growth-line-chart" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor="#4d69db" stopOpacity="0.32" />
+        <stop offset="100%" stopColor="#4d69db" stopOpacity="0" />
+      </linearGradient>
+    </defs>
+    <path d={areaPath} fill={`url(#${gradId})`} />
+    <path d={linePath} fill="none" stroke="#3b5bdb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+    {coords.map((c, i) => <g key={i}>
+      <circle cx={c.x} cy={c.y} r="4" className="growth-chart-dot" />
+      <text x={c.x} y={height - 6} textAnchor="middle" className="growth-chart-label">{c.label}</text>
+      <text x={c.x} y={Math.max(12, c.y - 10)} textAnchor="middle" className="growth-chart-value">{c.value}</text>
+    </g>)}
+  </svg>;
+}
+
 function ProgressRing({ score, size = 150 }: { score: number; size?: number }) { const radius = (size - 16) / 2; const circumference = 2 * Math.PI * radius; return <div className="progress-ring" style={{ width: size, height: size }}><svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}><circle className="ring-track" cx={size / 2} cy={size / 2} r={radius} /><circle className="ring-value" cx={size / 2} cy={size / 2} r={radius} style={{ strokeDasharray: circumference, strokeDashoffset: circumference - (score / 100) * circumference }} /></svg><div className="ring-label"><strong>{score}</strong><span>/ 100</span></div></div>; }
 function SkillTag({ children, green = false, red = false }: { children: React.ReactNode; green?: boolean; red?: boolean }) { return <span className={`skill-tag${green ? ' green' : ''}${red ? ' red' : ''}`}>{green && <Check size={12} />}{red && <X size={12} />}{children}</span>; }
 
@@ -705,13 +748,18 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   const { user, profile } = useAuth();
   const [resume, setResume] = useState<ResumeAnalysis | null>(null); const [results, setResults] = useState<AptitudeResult[]>([]); const [roadmap, setRoadmap] = useState<RoadmapSkill[]>([]); const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [applications, setApplications] = useState<JobApplication[]>([]);
+  const [resumeHistory, setResumeHistory] = useState<ResumeAnalysis[]>([]);
   const loadApplications = useCallback(() => { if (user) getApplications(user.id).then(setApplications); }, [user]);
-  useEffect(() => { if (!user) return; Promise.all([supabase.from('resume_analyses').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1).maybeSingle(), supabase.from('aptitude_results').select('*').eq('user_id', user.id), supabase.from('roadmap_skills').select('*').eq('user_id', user.id), supabase.from('milestones').select('*').eq('user_id', user.id)]).then(([r, a, s, m]) => { setResume(r.data as ResumeAnalysis | null); setResults((a.data || []) as AptitudeResult[]); setRoadmap((s.data || []) as RoadmapSkill[]); setMilestones((m.data || []) as Milestone[]); }); }, [user]);
+  useEffect(() => { if (!user) return; Promise.all([supabase.from('resume_analyses').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(1).maybeSingle(), supabase.from('aptitude_results').select('*').eq('user_id', user.id), supabase.from('roadmap_skills').select('*').eq('user_id', user.id), supabase.from('milestones').select('*').eq('user_id', user.id), supabase.from('resume_analyses').select('id, file_name, ats_score, skills, created_at').eq('user_id', user.id).order('created_at', { ascending: true })]).then(([r, a, s, m, h]) => { setResume(r.data as ResumeAnalysis | null); setResults((a.data || []) as AptitudeResult[]); setRoadmap((s.data || []) as RoadmapSkill[]); setMilestones((m.data || []) as Milestone[]); setResumeHistory((h.data || []) as ResumeAnalysis[]); }); }, [user]);
   useEffect(() => { loadApplications(); }, [loadApplications]);
   const attemptedCategories = Array.from(new Set(results.map((r) => r.category)));
   const avg = attemptedCategories.length ? Math.round(attemptedCategories.reduce((sum, cat) => sum + bestAttemptPct(results, cat), 0) / attemptedCategories.length) : 0;
   const gainedSkillNames = roadmap.filter((x) => x.done).map((x) => x.skill_name);
   const skillsGained = gainedSkillNames.length;
+  // Real data point per resume analysis — skills detected at that point in
+  // time — instead of the old chart's five hardcoded bar heights that never
+  // reflected anything about the actual account.
+  const growthPoints = resumeHistory.map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length }));
   const roadmapDone = roadmap.length > 0 && roadmap.every((x) => x.done);
   const aptitudePassed = results.some((r) => r.score / Math.max(r.total, 1) >= .7);
   const appliedCount = applications.length;
@@ -735,7 +783,7 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   const nextLabel = readyForNextRound ? 'Grow further' : 'Continue building';
   const nextHeadline = readyForNextRound ? 'Your path is taking shape.' : `${skillsRemaining} skill video${skillsRemaining === 1 ? '' : 's'} left to close the gap.`;
   const nextSubCopy = readyForNextRound ? 'Re-analyze your resume to surface new missing skills and start a tougher round.' : 'Every skill you build is a step closer to the role you want.';
-  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} /><LiveJobsCard role={profile?.target_role} location={profile?.city || profile?.state} go={go} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Last 6 months</span>} /><div className="chart-area"><div className="y-axis"><span>100%</span><span>75%</span><span>50%</span><span>25%</span><span>0%</span></div><div className="bars">{['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'].map((month, i) => <div className="bar-column" key={month}><div className="bar-track"><div className="bar-fill" style={{ height: `${[24, 32, 45, 52, 68, Math.max(68, Math.min(94, 68 + skillsGained * 5))][i]}%` }} /></div><span>{month}</span></div>)}</div></div><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{skillsGained} skills this journey</strong></div>{gainedSkillNames.length > 0 && <div className="tag-cloud growth-skills-list">{gainedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>)}</div>}</div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
+  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} /><LiveJobsCard role={profile?.target_role} location={profile?.city || profile?.state} go={go} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Skills detected per resume analysis</span>} /><SkillGrowthChart points={growthPoints} /><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{skillsGained} skills this journey</strong></div>{gainedSkillNames.length > 0 && <div className="tag-cloud growth-skills-list">{gainedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>)}</div>}</div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
 }
 
 function SalaryCard({ profile, resume, roadmap, roadmapDone, aptitudePassed }: { profile: Profile | null; resume: ResumeAnalysis | null; roadmap: RoadmapSkill[]; roadmapDone: boolean; aptitudePassed: boolean }) {
@@ -1733,6 +1781,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
     {loading ? <div className="empty-state">Loading user data…</div> : <>
       <div className="content-card">
         <SectionTitle icon={FileText} title="Resume history" action={<span className="muted-label">{resumes.length} analysis{resumes.length === 1 ? '' : 'es'}</span>} />
+        {resumes.length > 1 && <SkillGrowthChart points={[...resumes].reverse().map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length }))} />}
         {resumes.length ? <div className="admin-resume-history">
           {resumes.map((r, i) => <div className="admin-resume-entry" key={r.id}>
             <div className="admin-resume-entry-head">

@@ -172,3 +172,8 @@ nav { display: grid; gap: 5px; }
 .admin-view-btn:hover { background: rgba(59,91,219,.22); border-color: rgba(59,91,219,.5); }
 .admin-delete-btn { background: rgba(180,35,24,.12); border-color: rgba(180,35,24,.35); }
 .admin-delete-btn:hover:not(:disabled) { background: rgba(180,35,24,.22); border-color: rgba(180,35,24,.5); }
+.growth-line-chart { display: block; overflow: visible; }
+.growth-chart-dot { fill: var(--surface); stroke: #3b5bdb; stroke-width: 2.5; }
+.growth-chart-label { font-size: 9px; fill: var(--text-muted, #9ba7b7); }
+.growth-chart-value { font-size: 10px; font-weight: 700; fill: var(--text, #26344e); }
+.growth-chart-empty { padding: 24px 0; }
