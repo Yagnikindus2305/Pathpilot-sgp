@@ -45,6 +45,20 @@ async function logEmailEvent(email: string, type: 'signup' | 'password_reset' | 
   }
 }
 
+// Forensic login/signup/logout trail — goes through the Worker (not a direct
+// Supabase insert) so the real client IP can be attached server-side; the
+// browser can't be trusted to self-report its own IP. Best-effort: never
+// blocks the actual auth flow if this fails.
+async function logActivity(email: string, event: 'login_success' | 'login_failed' | 'signup' | 'logout', accessToken?: string) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    await fetch('/api/activity/log', { method: 'POST', headers, body: JSON.stringify({ email, event }) });
+  } catch {
+    // best-effort only
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -148,13 +162,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       options: { data: { full_name: fullName, phone } },
     });
     await logEmailEvent(email, 'signup', !error);
+    if (!error) await logActivity(email, 'signup');
     if (error) return { error: error.message };
     return { error: null };
   }
 
   async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email: normalizeEmail(email), password });
-    if (error) return { error: error.message };
+    email = normalizeEmail(email);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      await logActivity(email, 'login_failed');
+      return { error: error.message };
+    }
+    await logActivity(email, 'login_success', data.session?.access_token);
     await revokeOtherSessions();
     return { error: null };
   }
@@ -181,6 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
+    if (user?.email && session?.access_token) await logActivity(user.email, 'logout', session.access_token);
     try {
       await supabase.auth.signOut();
     } catch (err) {

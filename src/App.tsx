@@ -1359,16 +1359,49 @@ interface EmailLogRow {
   created_at: string;
 }
 
+interface AdminAuditLogRow {
+  id: string;
+  admin_email: string;
+  action: 'view_user' | 'delete_user';
+  target_email: string;
+  ip_address: string;
+  created_at: string;
+}
+
+interface UserActivityLogRow {
+  id: string;
+  email: string;
+  event: 'login_success' | 'login_failed' | 'signup' | 'logout';
+  ip_address: string;
+  user_agent: string;
+  created_at: string;
+}
+
 const EMAIL_TYPE_LABELS: Record<string, string> = { signup: 'Signup confirmation', password_reset: 'Password reset', otp_code: 'Email OTP code' };
+const AUDIT_ACTION_LABELS: Record<string, string> = { view_user: 'Viewed user', delete_user: 'Deleted user' };
+const ACTIVITY_EVENT_LABELS: Record<string, string> = { login_success: 'Login', login_failed: 'Login failed', signup: 'Signup', logout: 'Logout' };
 
 function AdminPage() {
   const { profile, session, user } = useAuth();
   const [users, setUsers] = useState<AdminUserRow[]>([]);
   const [aggregates, setAggregates] = useState<Record<string, AdminAggregate>>({});
   const [emailLog, setEmailLog] = useState<EmailLogRow[]>([]);
+  const [auditLog, setAuditLog] = useState<AdminAuditLogRow[]>([]);
+  const [activityLog, setActivityLog] = useState<UserActivityLogRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<AdminUserRow | null>(null);
+
+  async function refreshAuditLog() {
+    const { data } = await supabase.from('admin_audit_log').select('*').order('created_at', { ascending: false }).limit(200);
+    setAuditLog((data || []) as AdminAuditLogRow[]);
+  }
+
+  async function refreshActivityLog() {
+    const { data } = await supabase.from('user_activity_log').select('*').order('created_at', { ascending: false }).limit(200);
+    setActivityLog((data || []) as UserActivityLogRow[]);
+  }
 
   // Full account deletion needs Supabase's Admin API (service_role key),
   // which can never live in the browser — this calls a protected backend
@@ -1388,6 +1421,7 @@ function AdminPage() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message || 'Failed to delete user');
       setUsers((prev) => prev.filter((u) => u.id !== row.id));
+      await refreshAuditLog();
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Failed to delete user');
     } finally {
@@ -1411,6 +1445,8 @@ function AdminPage() {
       ]);
       if (profilesRes.error) { setError(profilesRes.error.message); setLoading(false); return; }
       setEmailLog((emailLogRes.data || []) as EmailLogRow[]);
+      await refreshAuditLog();
+      await refreshActivityLog();
 
       const rows = (profilesRes.data || []) as AdminUserRow[];
       setUsers(rows);
@@ -1461,7 +1497,23 @@ function AdminPage() {
     })();
   }, [profile?.is_admin]);
 
+  // Keeps both logs live while the panel is open — a new row (an admin
+  // viewing/deleting a user, or anyone logging in anywhere) appears without
+  // needing a manual refresh.
+  useEffect(() => {
+    if (!profile?.is_admin) return;
+    const channel = supabase
+      .channel('admin-panel-logs')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'admin_audit_log' }, () => refreshAuditLog())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'user_activity_log' }, () => refreshActivityLog())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.is_admin]);
+
   if (!profile?.is_admin) return <div className="empty-state"><Shield size={28} /><strong>Admin access only.</strong></div>;
+
+  if (selectedUser) return <AdminUserDetailPage user={selectedUser} onBack={() => setSelectedUser(null)} onViewLogged={refreshAuditLog} />;
 
   return <>
     <PageHeader eyebrow="ADMIN" title="All learners, at a glance." />
@@ -1474,7 +1526,7 @@ function AdminPage() {
             {users.map((u) => {
               const a = aggregates[u.id];
               const isSelf = u.id === user?.id;
-              return <tr key={u.id}>
+              return <tr key={u.id} className="admin-row-clickable" onClick={() => setSelectedUser(u)}>
                 <td>{u.full_name || '—'}{u.is_admin && <span className="tier-badge tier-dream" style={{ marginLeft: 6 }}>Admin</span>}</td>
                 <td>{u.email}</td>
                 <td>{u.college || '—'}</td>
@@ -1487,7 +1539,8 @@ function AdminPage() {
                 <td>{a?.aptitudeAvg != null ? `${a.aptitudeAvg}% (${a.aptitudeAttempts})` : '—'}</td>
                 <td>{a?.comparisons || 0}</td>
                 <td>{a?.milestonesDone || 0}</td>
-                <td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <button className="admin-view-btn" onClick={() => setSelectedUser(u)} title={`View ${u.full_name || u.email}`}><Eye size={14} /></button>
                   {!u.is_admin && !isSelf && (
                     <button className="admin-delete-btn" disabled={deletingId === u.id} onClick={() => deleteUser(u)} title={`Delete ${u.full_name || u.email}`}>
                       {deletingId === u.id ? '…' : <Trash2 size={14} />}
@@ -1500,6 +1553,42 @@ function AdminPage() {
         </table>
       </div>
       {!users.length && <p className="muted">No users yet.</p>}
+    </div>}
+    {!loading && <div className="content-card">
+      <SectionTitle icon={Shield} title="Admin Activity Log" action={<span className="muted-label">Last {auditLog.length} actions — who viewed or deleted which account, and from where</span>} />
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Target</th><th>IP address</th></tr></thead>
+          <tbody>
+            {auditLog.map((a) => <tr key={a.id}>
+              <td>{new Date(a.created_at).toLocaleString()}</td>
+              <td>{a.admin_email}</td>
+              <td>{AUDIT_ACTION_LABELS[a.action] || a.action}</td>
+              <td>{a.target_email || '—'}</td>
+              <td>{a.ip_address || '—'}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      {!auditLog.length && <p className="muted">No admin activity recorded yet.</p>}
+    </div>}
+    {!loading && <div className="content-card">
+      <SectionTitle icon={KeyRound} title="User Activity Log" action={<span className="muted-label">Last {activityLog.length} logins/signups/logouts, every account — IP + browser included</span>} />
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead><tr><th>When</th><th>Email</th><th>Event</th><th>IP address</th><th>Browser</th></tr></thead>
+          <tbody>
+            {activityLog.map((a) => <tr key={a.id}>
+              <td>{new Date(a.created_at).toLocaleString()}</td>
+              <td>{a.email}</td>
+              <td>{a.event === 'login_failed' ? <span className="skill-tag">{ACTIVITY_EVENT_LABELS[a.event]}</span> : ACTIVITY_EVENT_LABELS[a.event] || a.event}</td>
+              <td>{a.ip_address || '—'}</td>
+              <td className="admin-ua-cell">{a.user_agent || '—'}</td>
+            </tr>)}
+          </tbody>
+        </table>
+      </div>
+      {!activityLog.length && <p className="muted">No login activity recorded yet.</p>}
     </div>}
     {!loading && <div className="content-card">
       <SectionTitle icon={Mail} title="Email Activity" action={<span className="muted-label">Last {emailLog.length} requests — Supabase/Brevo confirms the send, not inbox delivery</span>} />
@@ -1518,6 +1607,133 @@ function AdminPage() {
       </div>
       {!emailLog.length && <p className="muted">No email activity recorded yet.</p>}
     </div>}
+  </>;
+}
+
+// Read-only per-user drill-down for the admin panel — every open is recorded
+// server-side (worker/index.ts logUserView, with the real client IP) since
+// the browser reads this data through the admin's own RLS-gated session,
+// same as the summary table, just scoped to one user and unaggregated.
+function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user: AdminUserRow; onBack: () => void; onViewLogged: () => void }) {
+  const { session } = useAuth();
+  const [resumes, setResumes] = useState<ResumeAnalysis[]>([]);
+  const [roadmap, setRoadmap] = useState<RoadmapSkill[]>([]);
+  const [aptitude, setAptitude] = useState<AptitudeResult[]>([]);
+  const [comparisons, setComparisons] = useState<ResumeComparison[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/admin/log-view', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ targetUserId: targetUser.id, targetEmail: targetUser.email }),
+    }).then(() => onViewLogged()).catch(() => {});
+
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const [resumesRes, roadmapRes, aptitudeRes, comparisonsRes, milestonesRes] = await Promise.all([
+        supabase.from('resume_analyses').select('*').eq('user_id', targetUser.id).order('created_at', { ascending: false }),
+        supabase.from('roadmap_skills').select('*').eq('user_id', targetUser.id),
+        supabase.from('aptitude_results').select('*').eq('user_id', targetUser.id).order('created_at', { ascending: false }),
+        supabase.from('resume_comparisons').select('*').eq('user_id', targetUser.id).order('created_at', { ascending: false }),
+        supabase.from('milestones').select('*').eq('user_id', targetUser.id),
+      ]);
+      if (cancelled) return;
+      setResumes((resumesRes.data || []) as ResumeAnalysis[]);
+      setRoadmap((roadmapRes.data || []) as RoadmapSkill[]);
+      setAptitude((aptitudeRes.data || []) as AptitudeResult[]);
+      setComparisons((comparisonsRes.data || []) as ResumeComparison[]);
+      setMilestones((milestonesRes.data || []) as Milestone[]);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetUser.id]);
+
+  const radarData = APTITUDE_CATEGORIES.map((cat) => ({ label: cat, value: bestAttemptPct(aptitude, cat) }));
+  const roadmapDone = roadmap.filter((r) => r.done).length;
+  const displayMilestones = milestones.length ? milestones : DEFAULT_MILESTONES.map((m) => ({ ...m, id: m.key, completed: false }));
+  const milestonesDone = displayMilestones.filter((m) => m.completed).length;
+
+  return <>
+    <PageHeader eyebrow="ADMIN / USER DETAIL" title={targetUser.full_name || targetUser.email}>
+      <button className="secondary-btn" onClick={onBack}><ChevronRight size={15} style={{ transform: 'rotate(180deg)' }} /> Back to all learners</button>
+    </PageHeader>
+
+    <div className="content-card">
+      <SectionTitle icon={UserRound} title="Profile" />
+      <div className="admin-detail-grid">
+        <div><span className="muted-label">Email</span><strong>{targetUser.email}</strong></div>
+        <div><span className="muted-label">College</span><strong>{targetUser.college || '—'}</strong></div>
+        <div><span className="muted-label">Course</span><strong>{targetUser.course || '—'}</strong></div>
+        <div><span className="muted-label">Target role</span><strong>{targetUser.target_role || '—'}</strong></div>
+        <div><span className="muted-label">Location</span><strong>{[targetUser.district, targetUser.state].filter(Boolean).join(', ') || '—'}</strong></div>
+      </div>
+    </div>
+
+    {loading ? <div className="empty-state">Loading user data…</div> : <>
+      <div className="content-card">
+        <SectionTitle icon={FileText} title="Resume history" action={<span className="muted-label">{resumes.length} analysis{resumes.length === 1 ? '' : 'es'}</span>} />
+        {resumes.length ? <div className="admin-resume-history">
+          {resumes.map((r, i) => <div className="admin-resume-entry" key={r.id}>
+            <div className="admin-resume-entry-head">
+              <div><strong>{r.file_name}</strong><span className="muted-label">{new Date(r.created_at).toLocaleString()}{i === 0 ? ' · Latest' : ''}</span></div>
+              <ProgressRing score={r.ats_score} size={64} />
+            </div>
+            <div className="tag-cloud">{r.skills.map((s) => <SkillTag green key={s}>{s}</SkillTag>)}</div>
+            {r.job_roles?.length > 0 && <div className="admin-resume-roles">{r.job_roles.slice(0, 5).map((jr) => <span className="muted-label" key={jr.role}>{jr.role} · {jr.match}%</span>)}</div>}
+          </div>)}
+        </div> : <p className="muted">No resumes analyzed yet.</p>}
+      </div>
+
+      <div className="content-card">
+        <SectionTitle icon={Target} title="Skill roadmap" action={<span className="muted-label">{roadmapDone}/{roadmap.length} complete</span>} />
+        {roadmap.length ? <div className="roadmap-groups">
+          {(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => {
+            const items = roadmap.filter((r) => r.priority === tier);
+            if (!items.length) return null;
+            const doneInTier = items.filter((r) => r.done).length;
+            return <div key={tier}>
+              <div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div>
+              <div className="tag-cloud">{items.map((s) => <SkillTag green={s.done} key={s.id}>{s.skill_name}</SkillTag>)}</div>
+            </div>;
+          })}
+        </div> : <p className="muted">No roadmap generated yet.</p>}
+      </div>
+
+      <div className="content-card">
+        <SectionTitle icon={GraduationCap} title="Aptitude performance" action={<span className="muted-label">{aptitude.length} attempt{aptitude.length === 1 ? '' : 's'}</span>} />
+        {aptitude.length ? <>
+          <div className="radar-wrap"><RadarChart data={radarData} /></div>
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead><tr><th>When</th><th>Category</th><th>Score</th></tr></thead>
+              <tbody>{aptitude.map((a) => <tr key={a.id}><td>{new Date(a.created_at).toLocaleString()}</td><td>{a.category}</td><td>{a.score}/{a.total} ({a.total ? Math.round((a.score / a.total) * 100) : 0}%)</td></tr>)}</tbody>
+            </table>
+          </div>
+        </> : <p className="muted">No aptitude tests taken yet.</p>}
+      </div>
+
+      <div className="content-card">
+        <SectionTitle icon={TrendingUp} title="Resume comparisons" action={<span className="muted-label">{comparisons.length} comparison{comparisons.length === 1 ? '' : 's'}</span>} />
+        {comparisons.length ? <div className="admin-resume-history">
+          {comparisons.map((c) => <div className="admin-resume-entry" key={c.id}>
+            <div className="admin-resume-entry-head"><div><strong>{c.old_score} → {c.new_score}</strong><span className="muted-label">{new Date(c.created_at).toLocaleString()}</span></div></div>
+            {c.skills_gained?.length > 0 && <div><span className="matched-role-skills-label">Skills gained</span><div className="tag-cloud">{c.skills_gained.map((s) => <SkillTag green key={s}>{s}</SkillTag>)}</div></div>}
+            {c.new_roles?.length > 0 && <div><span className="matched-role-skills-label">New roles unlocked</span><div className="tag-cloud">{c.new_roles.map((r) => <SkillTag key={r}>{r}</SkillTag>)}</div></div>}
+          </div>)}
+        </div> : <p className="muted">No resume comparisons yet.</p>}
+      </div>
+
+      <div className="content-card">
+        <SectionTitle icon={CheckCircle2} title="Milestones" action={<span className="muted-label">{milestonesDone}/{displayMilestones.length} complete</span>} />
+        <div className="milestone-list">
+          {displayMilestones.map((m) => <div className={m.completed ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{m.completed ? 'Completed' : 'Not yet'}</p></div></div>)}
+        </div>
+      </div>
+    </>}
   </>;
 }
 

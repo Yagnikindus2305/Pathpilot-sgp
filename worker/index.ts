@@ -52,7 +52,37 @@ async function requireAdmin(request: Request, env: Env) {
     .maybeSingle();
   if (profileError || !profile?.is_admin) return { error: json({ message: 'Admin access required' }, 403) };
 
-  return { supabaseAdmin, adminUserId: user.id };
+  return { supabaseAdmin, adminUserId: user.id, adminEmail: user.email || '' };
+}
+
+// Cloudflare's own header for the real client IP — the one header on this
+// platform that can't be spoofed by the request itself, since Cloudflare's
+// edge sets it, not the client.
+function getClientIp(request: Request): string {
+  return request.headers.get('CF-Connecting-IP') || 'unknown';
+}
+
+// Best-effort audit trail for admin actions — logging failure never blocks
+// the action itself (a lost log entry is far less bad than a broken delete).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function logAdminAction(
+  supabaseAdmin: any,
+  action: 'view_user' | 'delete_user',
+  adminId: string,
+  adminEmail: string,
+  targetUserId: string,
+  targetEmail: string,
+  ip: string,
+): Promise<void> {
+  const { error } = await supabaseAdmin.from('admin_audit_log').insert({
+    admin_id: adminId,
+    admin_email: adminEmail,
+    action,
+    target_user_id: targetUserId,
+    target_email: targetEmail,
+    ip_address: ip,
+  });
+  if (error) console.error('[admin] Failed to write audit log:', error.message);
 }
 
 // Deletes a user's auth account entirely — cascades (via each table's
@@ -62,7 +92,7 @@ async function requireAdmin(request: Request, env: Env) {
 async function deleteUser(request: Request, env: Env, targetId: string): Promise<Response> {
   const auth = await requireAdmin(request, env);
   if ('error' in auth) return auth.error;
-  const { supabaseAdmin, adminUserId } = auth;
+  const { supabaseAdmin, adminUserId, adminEmail } = auth;
 
   if (targetId === adminUserId) {
     return json({ message: "You can't delete your own account from here." }, 400);
@@ -70,13 +100,14 @@ async function deleteUser(request: Request, env: Env, targetId: string): Promise
 
   const { data: targetProfile, error: targetError } = await supabaseAdmin
     .from('profiles')
-    .select('is_admin')
+    .select('is_admin, email')
     .eq('id', targetId)
     .maybeSingle();
   if (targetError) return json({ message: targetError.message }, 500);
   if (targetProfile?.is_admin) {
     return json({ message: 'Admin accounts cannot be deleted from the panel.' }, 403);
   }
+  const targetEmail = targetProfile?.email || '';
 
   const { error } = await supabaseAdmin.auth.admin.deleteUser(targetId);
   if (error) {
@@ -84,6 +115,78 @@ async function deleteUser(request: Request, env: Env, targetId: string): Promise
     return json({ message: error.message }, 500);
   }
   console.warn(`[admin] User ${targetId} deleted by admin ${adminUserId}`);
+  await logAdminAction(supabaseAdmin, 'delete_user', adminUserId, adminEmail, targetId, targetEmail, getClientIp(request));
+  return json({ ok: true });
+}
+
+// Records that an admin opened a user's detail drill-down — the view itself
+// still happens via the browser's own Supabase session (same RLS-gated reads
+// the admin table already uses), this just adds the accountability record,
+// since the browser can't be trusted to self-report its own IP.
+async function logUserView(request: Request, env: Env): Promise<Response> {
+  const auth = await requireAdmin(request, env);
+  if ('error' in auth) return auth.error;
+  const { supabaseAdmin, adminUserId, adminEmail } = auth;
+
+  let body: { targetUserId?: unknown; targetEmail?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ message: 'Invalid request body' }, 400);
+  }
+  const targetUserId = typeof body.targetUserId === 'string' ? body.targetUserId : '';
+  const targetEmail = typeof body.targetEmail === 'string' ? body.targetEmail : '';
+  if (!targetUserId) return json({ message: 'targetUserId is required' }, 400);
+
+  await logAdminAction(supabaseAdmin, 'view_user', adminUserId, adminEmail, targetUserId, targetEmail, getClientIp(request));
+  return json({ ok: true });
+}
+
+const ACTIVITY_EVENTS = new Set(['login_success', 'login_failed', 'signup', 'logout']);
+const SIMPLE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Records every login/signup/logout attempt (success and failure) with the
+// real client IP — deliberately public, not requireUser-gated, since a
+// failed login has no session to authenticate against. Strict input
+// validation is the abuse guard here rather than an auth check.
+async function logActivity(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) {
+    return json({ message: 'Not configured' }, 503);
+  }
+  let body: { email?: unknown; event?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ message: 'Invalid request body' }, 400);
+  }
+  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase().slice(0, 254) : '';
+  const event = typeof body.event === 'string' ? body.event : '';
+  if (!email || !SIMPLE_EMAIL_PATTERN.test(email) || !ACTIVITY_EVENTS.has(event)) {
+    return json({ message: 'Invalid email or event' }, 400);
+  }
+
+  const supabaseAdmin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  // login_success/logout carry a live session — verify the bearer token
+  // server-side to attach a trustworthy user_id rather than accepting one
+  // from the request body. login_failed/signup have no session yet.
+  let userId: string | null = null;
+  const token = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (token) {
+    const { data } = await supabaseAdmin.auth.getUser(token);
+    userId = data?.user?.id || null;
+  }
+
+  const { error } = await supabaseAdmin.from('user_activity_log').insert({
+    user_id: userId,
+    email,
+    event,
+    ip_address: getClientIp(request),
+    user_agent: (request.headers.get('User-Agent') || '').slice(0, 500),
+  });
+  if (error) console.error('[activity] Failed to log:', error.message);
   return json({ ok: true });
 }
 
@@ -410,6 +513,14 @@ export default {
     const deleteMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (deleteMatch && request.method === 'DELETE') {
       return deleteUser(request, env, deleteMatch[1]);
+    }
+
+    if (url.pathname === '/api/admin/log-view' && request.method === 'POST') {
+      return logUserView(request, env);
+    }
+
+    if (url.pathname === '/api/activity/log' && request.method === 'POST') {
+      return logActivity(request, env);
     }
 
     if (url.pathname === '/api/jobs/search' && request.method === 'GET') {

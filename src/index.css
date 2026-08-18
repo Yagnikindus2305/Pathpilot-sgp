@@ -154,3 +154,21 @@ nav { display: grid; gap: 5px; }
   .module-stepper { padding: 14px 16px; }.stepper-node span { display: none; }.stepper-dot { width: 30px; height: 30px; }
   .company-grid { grid-template-columns: 1fr; }
  .auth-page { grid-template-columns: 1fr; }.auth-visual { display: none; }.auth-form-wrap { padding: 35px 24px; }.mobile-brand { display: block; margin-bottom: 55px; }.mobile-brand .brand { padding: 0; }.sidebar { position: fixed; transform: translateX(-100%); transition: transform .25s; box-shadow: 10px 0 30px #17233c20; }.sidebar.open { transform: translateX(0); }.nav-overlay { position: fixed; inset: 0; background: #14213b55; border: 0; z-index: 10; }.menu-btn { display: grid; place-items: center; }.topbar { padding: 0 18px; height: 65px; }.breadcrumb { margin-left: 7px; }.status-pill { display: none; }.page-wrap { padding: 32px 18px 55px; }.page-header { align-items: start; gap: 15px; flex-direction: column; margin-bottom: 26px; }.page-header h1 { font-size: 27px; }.metric-grid { grid-template-columns: 1fr 1fr; gap: 10px; }.metric-card { padding: 15px; }.metric-value { font-size: 24px; }.welcome-strip { align-items: start; flex-wrap: wrap; }.welcome-strip button { margin-left: 53px; }.dashboard-grid { grid-template-columns: 1fr; }.content-card { padding: 17px; }.bottom-grid { grid-template-columns: 1fr; }.bars { gap: 8px; }.salary-content { gap: 8px; }.salary-point strong { font-size: 16px; }.result-grid { grid-template-columns: 1fr; }.score-display { justify-content: center; }.role-row { gap: 8px; }.role-info { width: 110px; }.role-salary { width: 90px; }.role-salary small { font-size: 8px; }.roadmap-row { padding: 12px; gap: 9px; }.roadmap-skill { flex-wrap: wrap; gap: 6px; }.watch-link { display: none; }.test-grid { grid-template-columns: 1fr; }.matched-roles-grid { grid-template-columns: 1fr; }.roadmap-tier-grid { grid-template-columns: 1fr; }.launcher-grid { grid-template-columns: 1fr; }.options { grid-template-columns: 1fr; }.compare-upload { grid-template-columns: 1fr; gap: 15px; }.vs-badge { transform: rotate(90deg); }.comparison-columns { grid-template-columns: 1fr; gap: 25px; }.compare-score-grid { gap: 16px; padding: 20px 8px; }.form-grid, .profile-fields { grid-template-columns: 1fr; }.result-top, .compare-result-head { align-items: start; gap: 14px; flex-direction: column; }.roadmap-hero { padding: 21px; }.roadmap-hero h2 { font-size: 19px; }.roadmap-hero p { max-width: 200px; }.role-pill { align-self: stretch; }.header-note { align-self: stretch; }.visual-stats { gap: 22px; }.app-footer { padding: 12px 18px; flex-direction: column; align-items: flex-start; gap: 5px; }.workspace-footer { padding: 24px 18px 16px; gap: 20px; }.footer-top { grid-template-columns: 1fr; gap: 24px; }.auth-theme-toggle { top: 14px; right: 14px; } }
+
+.admin-view-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border); background: var(--surface); color: #3b5bdb; border-radius: 7px; margin-right: 6px; }
+.admin-view-btn:hover { background: #eff2ff; border-color: #c7d2fe; }
+.admin-row-clickable { cursor: pointer; }
+.admin-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 18px; }
+.admin-detail-grid > div { display: grid; gap: 5px; }
+.admin-detail-grid strong { color: var(--text); font-size: 13px; }
+.admin-resume-history { display: grid; gap: 18px; }
+.admin-resume-entry { border: 1px solid var(--border); border-radius: 10px; padding: 16px; display: grid; gap: 12px; }
+.admin-resume-entry-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.admin-resume-entry-head strong { display: block; color: var(--text); font-size: 13px; }
+.admin-resume-roles { display: flex; flex-wrap: wrap; gap: 10px; }
+.admin-ua-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-view-btn, .admin-delete-btn { width: 32px; height: 32px; }
+.admin-view-btn { background: rgba(59,91,219,.12); border-color: rgba(59,91,219,.35); }
+.admin-view-btn:hover { background: rgba(59,91,219,.22); border-color: rgba(59,91,219,.5); }
+.admin-delete-btn { background: rgba(180,35,24,.12); border-color: rgba(180,35,24,.35); }
+.admin-delete-btn:hover:not(:disabled) { background: rgba(180,35,24,.22); border-color: rgba(180,35,24,.5); }
