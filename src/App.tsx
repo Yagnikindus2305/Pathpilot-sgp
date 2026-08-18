@@ -1727,6 +1727,17 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
     window.open(data.signedUrl, '_blank', 'noopener');
   }
 
+  // For resumes analyzed before file storage existed, the original PDF/DOCX
+  // bytes were genuinely never kept — only the extracted text was. This is
+  // the most useful thing that can actually be shown for those, built
+  // entirely client-side from data already fetched (no extra request).
+  function viewExtractedText(fileName: string, rawText: string) {
+    const blob = new Blob([`${fileName}\n${'='.repeat(fileName.length)}\n\n${rawText}`], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
   useEffect(() => {
     fetch('/api/admin/log-view', {
       method: 'POST',
@@ -1804,7 +1815,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
               <div>
                 <strong>{r.file_name}</strong>
                 <span className="muted-label">{new Date(r.created_at).toLocaleString()}{i === 0 ? ' · Latest' : ''}</span>
-                {r.file_path ? <button type="button" className="text-btn" disabled={openingResumeId === r.id} onClick={() => viewResume(r.id, r.file_path as string)}>{openingResumeId === r.id ? 'Opening…' : 'View resume file'} <ArrowRight size={12} /></button> : <span className="muted-label">Original file not stored (uploaded before this feature)</span>}
+                {r.file_path ? <button type="button" className="text-btn" disabled={openingResumeId === r.id} onClick={() => viewResume(r.id, r.file_path as string)}>{openingResumeId === r.id ? 'Opening…' : 'View resume file'} <ArrowRight size={12} /></button> : r.raw_text ? <button type="button" className="text-btn" onClick={() => viewExtractedText(r.file_name, r.raw_text)}>View extracted text (original file wasn't kept) <ArrowRight size={12} /></button> : <span className="muted-label">Original file not stored (uploaded before this feature)</span>}
               </div>
               <ProgressRing score={r.ats_score} size={64} />
             </div>
