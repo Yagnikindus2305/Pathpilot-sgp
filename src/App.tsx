@@ -660,15 +660,38 @@ function tierClass(tier: string): string {
 }
 function TierBadge({ tier }: { tier: string }) { return <span className={`tier-badge ${tierClass(tier)}`}>{tier}</span>; }
 
-const SALARY_LEVELS: ExperienceLevel[] = ['Entry', 'Mid', 'Senior'];
+// Sums total months across every logged work_experiences row (each entry's
+// own end_date, or today if still current) -- both the bucket (matching the
+// same rough boundaries the salary-lookup prompt already tells the AI: "Mid"
+// ~3-5 years, "Senior" ~5+ years) and the precise year count. The bucket
+// drives the default tab and the cache key (kept coarse so the same
+// company+role+level is still shared across every user, not busted by
+// everyone's slightly different exact year count); the precise years are
+// sent only as extra prompt context on an actual cache-miss search, for a
+// more accurate grounded answer than the bucket label alone would give.
+function computeExperienceStats(workExperience: WorkExperience[]): { years: number; level: ExperienceLevel } {
+  const totalMonths = workExperience.reduce((sum, exp) => {
+    if (!exp.start_date) return sum;
+    const start = new Date(exp.start_date);
+    const end = exp.end_date ? new Date(exp.end_date) : new Date();
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return sum;
+    const months = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth());
+    return sum + Math.max(0, months);
+  }, 0);
+  const years = Math.round((totalMonths / 12) * 10) / 10;
+  const level: ExperienceLevel = totalMonths >= 60 ? 'Senior' : totalMonths >= 24 ? 'Mid' : 'Entry';
+  return { years, level };
+}
 
-// Live company+role salary, with a level toggle (Entry/Mid/Senior) so a
-// company card isn't stuck showing one blended range -- falls back to the
-// existing static estimate (silently, no "Live" badge) whenever the live
-// lookup has nothing for that exact combination, so a number is always shown.
-function CompanySalaryBadge({ company, role, location, fallback }: { company: string; role: string; location: string; fallback: string }) {
-  const [level, setLevel] = useState<ExperienceLevel>('Entry');
-  const [result, setResult] = useState<SalaryLookupResult | null>(() => getCachedSalary(company, role, location, 'Entry') || null);
+// Live company+role salary at the user's own computed experience level
+// (from Module 1's logged work experience -- 0 experience = Entry, etc).
+// No manual override: the level is a fact about the user, not a UI toggle.
+// Falls back to the existing static estimate (silently, no "Live" badge)
+// whenever the live lookup has nothing for that exact combination, so a
+// number is always shown.
+function CompanySalaryBadge({ company, role, location, fallback, defaultLevel = 'Entry', experienceYears = 0 }: { company: string; role: string; location: string; fallback: string; defaultLevel?: ExperienceLevel; experienceYears?: number }) {
+  const level = defaultLevel;
+  const [result, setResult] = useState<SalaryLookupResult | null>(() => getCachedSalary(company, role, location, level) || null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState<string | null>(null);
@@ -679,18 +702,18 @@ function CompanySalaryBadge({ company, role, location, fallback }: { company: st
     const cached = getCachedSalary(company, role, location, level);
     if (cached) { setResult(cached); return; }
     setLoading(true);
-    fetchCompanySalary(company, role, location, level).then((res) => {
+    fetchCompanySalary(company, role, location, level, false, experienceYears).then((res) => {
       if (cancelled) return;
       setResult(res);
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [company, role, location, level]);
+  }, [company, role, location, level, experienceYears]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     setRefreshMsg(null);
-    const res = await fetchCompanySalary(company, role, location, level, true);
+    const res = await fetchCompanySalary(company, role, location, level, true, experienceYears);
     setRefreshing(false);
     if (res?.rateLimited) {
       setRefreshMsg('Already refreshed today — try again tomorrow.');
@@ -707,12 +730,8 @@ function CompanySalaryBadge({ company, role, location, fallback }: { company: st
       : fallback;
 
   return <div className="salary-badge-wrap">
-    <div className="salary-level-tabs">
-      {SALARY_LEVELS.map((lvl) => (
-        <button key={lvl} type="button" className={lvl === level ? 'salary-level-tab active' : 'salary-level-tab'} onClick={() => setLevel(lvl)}>{lvl}</button>
-      ))}
-    </div>
     <div className="salary-badge-row">
+      <span className="salary-level-fixed">{level}</span>
       <span className="salary-range">{rangeText}</span>
       {isLive && <span className="live-badge"><Zap size={11} /> Live</span>}
     </div>
@@ -836,13 +855,20 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   useEffect(() => { loadApplications(); }, [loadApplications]);
   const attemptedCategories = Array.from(new Set(results.map((r) => r.category)));
   const avg = attemptedCategories.length ? Math.round(attemptedCategories.reduce((sum, cat) => sum + bestAttemptPct(results, cat), 0) / attemptedCategories.length) : 0;
-  const gainedSkillNames = roadmap.filter((x) => x.done).map((x) => x.skill_name);
+  // Must match RoadmapPage's own isDone exactly (done in the DB row OR the
+  // skill is already in profile.saved_skills from a resume) -- reading
+  // roadmap_skills.done alone here caused this page to show "4 left" while
+  // the Roadmap page itself showed 100%/18-of-18 for the same account, since
+  // a skill satisfied via a resume upload is never written back as done=true.
+  const knownLowerDash = new Set((profile?.saved_skills || []).map((s) => s.toLowerCase()));
+  const isRoadmapItemDone = (x: RoadmapSkill) => x.done || knownLowerDash.has(x.skill_name.toLowerCase());
+  const gainedSkillNames = roadmap.filter(isRoadmapItemDone).map((x) => x.skill_name);
   const skillsGained = gainedSkillNames.length;
   // Real data point per resume analysis — skills detected at that point in
   // time — instead of the old chart's five hardcoded bar heights that never
   // reflected anything about the actual account.
   const growthPoints = resumeHistory.map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length, detail: `${r.file_name} · ${new Date(r.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}` }));
-  const roadmapDone = roadmap.length > 0 && roadmap.every((x) => x.done);
+  const roadmapDone = roadmap.length > 0 && roadmap.every(isRoadmapItemDone);
   const aptitudePassed = results.some((r) => r.score / Math.max(r.total, 1) >= .7);
   const appliedCount = applications.length;
   const profileComplete = Boolean(profile?.full_name && profile?.college && profile?.target_role);
@@ -856,7 +882,7 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   const radarData = APTITUDE_CATEGORIES.map((cat) => ({ label: cat, value: bestAttemptPct(results, cat) }));
   const untestedCategories = APTITUDE_CATEGORIES.filter((cat) => !results.some((r) => r.category === cat));
   const hasRoadmap = roadmap.length > 0;
-  const skillsRemaining = roadmap.filter((x) => !x.done).length;
+  const skillsRemaining = roadmap.filter((x) => !isRoadmapItemDone(x)).length;
   const readyForNextRound = !hasRoadmap || roadmapDone;
   // Once every current roadmap skill is checked off, the loop should push the user
   // back to resume analysis instead of a dead-end roadmap page — that's how newly
@@ -969,6 +995,27 @@ function MetricCard({ label, value, suffix, icon: Icon, color, onClick }: { labe
 // unfinished skills sitting in the table forever, permanently failing
 // "roadmap complete" even though the current role's roadmap shows 100%.
 // Drop anything that isn't part of the current role's skill set to keep it scoped.
+// Union of skills required by companies the user is realistically close to
+// (>= 50% on that company's own best-matching role) -- a company's own
+// posted requirements are a separate, independently-curated list from the
+// target role's roadmap, so "100% roadmap" alone never guaranteed "0
+// missing" on a specific company's card. Folding these into the roadmap
+// closes that gap. Deliberately scoped to close/best matches only, and only
+// each company's single bestMatch role (not every secondary role it posts)
+// -- syncing every tangentially-matching company's full role list ballooned
+// a real 18-skill roadmap to 62, reintroducing the "why does my roadmap
+// total keep changing" problem this session already fixed once, worse.
+const COMPANY_SYNC_MIN_MATCH_PCT = 50;
+function companyRequiredSkillNames(companies: CompanyMatch[]): string[] {
+  const set = new Set<string>();
+  for (const c of companies) {
+    if (c.bestMatch.matchPct < COMPANY_SYNC_MIN_MATCH_PCT) continue;
+    for (const s of c.bestMatch.have) set.add(s);
+    for (const s of c.bestMatch.missing) set.add(s);
+  }
+  return Array.from(set);
+}
+
 async function pruneStaleRoadmapSkills(userId: string, requiredSkills: string[]) {
   const required = requiredSkills;
   if (!required.length) return;
@@ -987,14 +1034,24 @@ async function syncRoadmap(skills: string[], role: string, userId: string) {
   const roadmapItems = isKnownRole(role)
     ? await fetchRoadmap(role, skills).then((res) => res.roadmap).catch(() => getRoleRoadmap(role))
     : (await fetchAIRole(role))?.roadmap || getRoleRoadmap(role);
-  // Drop only skills the new resume/role no longer needs — a manually
-  // checked-off roadmap skill is self-reported real progress, not something
-  // this resume's text has to keep proving, so it must never be wiped just
-  // because a different (or re-analyzed) resume came in. Upserting without a
-  // `done` field leaves each row's existing done-status untouched; only
-  // brand-new rows start out unmarked.
-  await pruneStaleRoadmapSkills(userId, roadmapItems.map((item) => item.skill));
-  const rows = roadmapItems.map((item) => ({ user_id: userId, skill_name: item.skill, priority: item.priority || 'Must Have' }));
+  const roadmapSkillNames = roadmapItems.map((item) => item.skill);
+  // Any skill a currently-matching company actually requires gets tracked
+  // here too, even when it's outside the role's own fixed roadmap list —
+  // otherwise "100% roadmap" never meant "0 missing" on a real company card.
+  const { companies } = await fetchCombinedCompanyMatch(skills, [role]).catch(() => ({ companies: [] as CompanyMatch[] }));
+  const companySkillNames = companyRequiredSkillNames(companies)
+    .filter((s) => !roadmapSkillNames.some((r) => r.toLowerCase() === s.toLowerCase()));
+  // Drop only skills the new resume/role/company set no longer needs — a
+  // manually checked-off roadmap skill is self-reported real progress, not
+  // something this resume's text has to keep proving, so it must never be
+  // wiped just because a different (or re-analyzed) resume came in.
+  // Upserting without a `done` field leaves each row's existing done-status
+  // untouched; only brand-new rows start out unmarked.
+  await pruneStaleRoadmapSkills(userId, [...roadmapSkillNames, ...companySkillNames]);
+  const rows = [
+    ...roadmapItems.map((item) => ({ user_id: userId, skill_name: item.skill, priority: item.priority || 'Must Have' })),
+    ...companySkillNames.map((skill) => ({ user_id: userId, skill_name: skill, priority: 'Must Have' as const })),
+  ];
   if (rows.length) {
     const { error } = await supabase.from('roadmap_skills').upsert(rows, { onConflict: 'user_id,skill_name' });
     if (error) console.error('Failed to sync roadmap skills:', error.message);
@@ -1053,6 +1110,15 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
 
 function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalysis; round: number; onReset: () => void; go: (module: Module) => void }) {
   const { user, profile, updateProfile, session } = useAuth();
+  const [workExperience, setWorkExperience] = useState<WorkExperience[]>([]);
+  useEffect(() => {
+    if (!user) { setWorkExperience([]); return; }
+    let cancelled = false;
+    supabase.from('work_experiences').select('*').eq('user_id', user.id)
+      .then(({ data }) => { if (!cancelled) setWorkExperience((data || []) as WorkExperience[]); });
+    return () => { cancelled = true; };
+  }, [user]);
+  const { years: experienceYears, level: experienceLevel } = useMemo(() => computeExperienceStats(workExperience), [workExperience]);
   const targetRole = profile?.target_role || analysis.job_roles[0]?.role || 'Full Stack Developer';
   // For a role typed via "Other" that isn't in our curated datasets, the AI
   // lookup (aiRoleResolver.ts) supplies real skills instead of silently
@@ -1124,6 +1190,14 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
     }
     return Array.from(map.entries()).sort((a, b) => Math.max(...b[1].map((c) => c.bestMatch.matchPct)) - Math.max(...a[1].map((c) => c.bestMatch.matchPct)));
   }, [companyMatches]);
+  // Companies below are grouped by their OWN posted title (see the note
+  // above), so a 100%-matched curated role like "Cybersecurity Analyst"
+  // legitimately has no group sharing that exact name -- every company
+  // uses its own title (Security Analyst, Security Engineer, etc) for
+  // effectively the same domain. Surface that connection explicitly instead
+  // of leaving a 100% match looking like it led nowhere.
+  const topRoleName = relevantJobRoles[0]?.role;
+  const topRoleHasOwnGroup = topRoleName ? roleGroupedCompanies.some(([name]) => name.toLowerCase() === topRoleName.toLowerCase()) : true;
 
   function renderHiringRow(c: CompanyMatch) {
     const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`);
@@ -1132,7 +1206,7 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
     const rowKey = `${c.company}::${c.bestMatch.role}`;
     return <div className="hiring-row" key={rowKey}>
       <div className="hiring-row-top"><strong>{c.company}</strong><TierBadge tier={c.tier} /><span className="matched-role-pct-mini">{c.bestMatch.matchPct}%</span></div>
-      <div className="hiring-row-meta"><CompanySalaryBadge company={c.company} role={c.bestMatch.role} location={profile?.city || profile?.state || 'India'} fallback={c.salaryBand} /></div>
+      <div className="hiring-row-meta"><CompanySalaryBadge company={c.company} role={c.bestMatch.role} location={profile?.city || profile?.state || 'India'} fallback={c.salaryBand} defaultLevel={experienceLevel} experienceYears={experienceYears} /></div>
       <div className="hiring-row-foot">
         {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> :
           <button type="button" className={expanded ? 'role-skill-missing-btn open' : 'role-skill-missing-btn'} onClick={() => setExpandedCompany(expanded ? null : rowKey)}>
@@ -1248,6 +1322,7 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
     {roleGroupedCompanies.length > 0 && <div className="content-card company-match-card">
       <SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Grouped by role</span>} />
       <p className="missing-intro">Salary shown is that company's full range for the role, not a guaranteed offer at your match%. <TierBadge tier="Mass recruiter" /> / Tier-1 are realistic near-term targets — <TierBadge tier="Dream" /> tiers are stretch goals worth aiming for once you're truly interview-ready.</p>
+      {topRoleName && !topRoleHasOwnGroup && <p className="missing-intro company-title-note">No company below is posted under the exact title "{topRoleName}" — companies use their own titles for effectively the same domain (e.g. Security Analyst, Security Engineer). The groups below are your real, actively-hiring options in that domain.</p>}
       <div className="role-group-list">
         {roleGroupedCompanies.map(([roleName, companies]) => <div className="role-group" key={roleName}>
           <div className="role-group-head"><strong>{roleName}</strong><span className="muted-label">{companies.length} compan{companies.length === 1 ? 'y' : 'ies'} hiring</span></div>
@@ -1275,7 +1350,15 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
     const knownSkills = profile?.saved_skills || [];
     const knownLower = new Set(knownSkills.map((s) => s.toLowerCase()));
     const apply = async (roadmapItems: Array<{ skill: string; video: string; priority?: 'Must Have' | 'Nice to Have' | 'Advanced' }>, requiredSkills: string[]) => {
-      await pruneStaleRoadmapSkills(user.id, requiredSkills);
+      // Any skill a currently-matching company actually requires gets
+      // tracked here too, even when it's outside the role's own fixed
+      // roadmap list -- otherwise "100% roadmap" never meant "0 missing" on
+      // a real company card (see companyRequiredSkillNames).
+      const { companies } = await fetchCombinedCompanyMatch(knownSkills, [role]).catch(() => ({ companies: [] as CompanyMatch[] }));
+      const companySkillNames = companyRequiredSkillNames(companies)
+        .filter((s) => !requiredSkills.some((r) => r.toLowerCase() === s.toLowerCase()));
+
+      await pruneStaleRoadmapSkills(user.id, [...requiredSkills, ...companySkillNames]);
       const { data: existingRows } = await supabase.from('roadmap_skills').select('skill_name, done').eq('user_id', user.id);
       const doneMap = new Map((existingRows || []).map((r: { skill_name: string; done: boolean }) => [r.skill_name, r.done]));
       // A skill counts as done if it's been manually checked off OR your
@@ -1290,8 +1373,26 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
       // roles have no separate growth tier, so this stays base-only for them.
       const baseAllDone = roadmapItems.length > 0 && roadmapItems.every((item) => isDone(item.skill));
       const growthItems = (!aiRole && baseAllDone) ? getRoleGrowthSkills(role) : [];
+      const companyItems = companySkillNames.map((skill) => ({
+        skill,
+        video: `https://www.youtube.com/results?search_query=${encodeURIComponent(skill + ' full course tutorial')}`,
+        priority: 'Must Have' as const,
+      }));
+      // Persist before rendering, not after -- otherwise the Roadmap page's
+      // own total is briefly ahead of what's actually in the database, and
+      // navigating away (e.g. straight to Growth Dashboard, which reads
+      // roadmap_skills fresh) before this finishes shows a smaller, stale
+      // total there. Same bug class as the Dashboard/Roadmap mismatch this
+      // session already found once, just from a race instead of a formula.
+      if (companyItems.length) {
+        const rows = companyItems.map((item) => ({ user_id: user.id, skill_name: item.skill, priority: item.priority }));
+        const { error } = await supabase.from('roadmap_skills').upsert(rows, { onConflict: 'user_id,skill_name' });
+        if (error) console.error('Failed to sync company-required roadmap skills:', error.message);
+      }
+
       const combined = [
         ...roadmapItems.map((item) => ({ ...item, tier: 'base' as const })),
+        ...companyItems.map((item) => ({ ...item, tier: 'company' as const })),
         ...growthItems.map((item) => ({ ...item, priority: 'Advanced' as const, tier: 'growth' as const })),
       ];
 
@@ -1508,6 +1609,11 @@ function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProg
   }
 
   useEffect(() => { if (user) supabase.from('aptitude_results').select('*').eq('user_id', user.id).then(({ data }) => setResults((data || []) as AptitudeResult[])); }, [user]);
+  // Resume Compare is gated on a 70%+ aptitude score (see progression.ts) --
+  // the bottom-of-page banner points there once that's true, but falls back
+  // to plain re-analysis (always accessible) for anyone who hasn't passed
+  // yet, so it never sends someone straight to a locked page.
+  const aptitudePassed = results.some((r) => r.score / Math.max(r.total, 1) >= .7);
 
   function start(cat: string) {
     const nextRound = results.filter((r) => r.category === cat).length + 1;
@@ -1542,7 +1648,7 @@ function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProg
   }
 
   if (category) return <TestView category={category} round={round} questions={activeQuestions} answers={answers} setAnswers={setAnswers} submitted={submitted} score={score} autoSubmitReason={autoSubmitReason} onSubmit={submit} onBack={() => setCategory(null)} go={go} />;
-  return <><PageHeader eyebrow="MODULE 04 / KNOWLEDGE CHECK" title="Practice with purpose." /><div className="module-intro"><p>Short, focused tests to help you turn learning into confidence. Choose a category and see where you stand. Each attempt pulls a fresh, shuffled set of questions — clear a category once and the next attempt gets harder.</p></div><div className="test-grid">{Object.keys(questions).map((cat, index) => { const attempts = results.filter((r) => r.category === cat).length; const best = results.filter((r) => r.category === cat).reduce((max, r) => Math.max(max, Math.round(r.score / r.total * 100)), 0); const icons = [BarChart3, Target, BookOpen, Zap]; const Icon = icons[index]; const bank = bankFor(cat); const tailored = cat === 'Technical MCQs' && technicalDomain; return <button className="test-card" key={cat} onClick={() => start(cat)}><div className={`test-icon icon-${index}`}><Icon size={22} /></div><div className="test-card-head"><strong>{tailored ? `${technicalDomain} MCQs` : cat}</strong><p>{Math.min(TEST_QUESTION_COUNT, bank.length)} questions · 15 min{tailored ? ' · tailored to your target role' : ''}{attempts > 0 ? ` · Round ${attempts + 1} next (harder)` : ''}</p></div><div className="test-card-foot"><span>Best score {best || '—'}%</span><ArrowRight size={15} /></div></button>; })}</div><div className="next-banner"><div className="banner-icon"><FileSearch size={20} /></div><div><strong>Want to sharpen your resume further?</strong><p>Re-analyze your resume anytime to catch newly missing skills and start a tougher round.</p></div><button onClick={() => go('resume')}>Go to Resume Analysis <ArrowRight size={16} /></button></div></>;
+  return <><PageHeader eyebrow="MODULE 04 / KNOWLEDGE CHECK" title="Practice with purpose." /><div className="module-intro"><p>Short, focused tests to help you turn learning into confidence. Choose a category and see where you stand. Each attempt pulls a fresh, shuffled set of questions — clear a category once and the next attempt gets harder.</p></div><div className="test-grid">{Object.keys(questions).map((cat, index) => { const attempts = results.filter((r) => r.category === cat).length; const best = results.filter((r) => r.category === cat).reduce((max, r) => Math.max(max, Math.round(r.score / r.total * 100)), 0); const icons = [BarChart3, Target, BookOpen, Zap]; const Icon = icons[index]; const bank = bankFor(cat); const tailored = cat === 'Technical MCQs' && technicalDomain; return <button className="test-card" key={cat} onClick={() => start(cat)}><div className={`test-icon icon-${index}`}><Icon size={22} /></div><div className="test-card-head"><strong>{tailored ? `${technicalDomain} MCQs` : cat}</strong><p>{Math.min(TEST_QUESTION_COUNT, bank.length)} questions · 15 min{tailored ? ' · tailored to your target role' : ''}{attempts > 0 ? ` · Round ${attempts + 1} next (harder)` : ''}</p></div><div className="test-card-foot"><span>Best score {best || '—'}%</span><ArrowRight size={15} /></div></button>; })}</div><div className="next-banner">{aptitudePassed ? <><div className="banner-icon"><FileSearch size={20} /></div><div><strong>Ready to see what's changed?</strong><p>Compare your resume against a fresh upload to see newly unlocked roles and closed skill gaps.</p></div><button onClick={() => go('compare')}>Go to Resume Compare <ArrowRight size={16} /></button></> : <><div className="banner-icon"><FileSearch size={20} /></div><div><strong>Want to sharpen your resume further?</strong><p>Re-analyze your resume anytime to catch newly missing skills and start a tougher round.</p></div><button onClick={() => go('resume')}>Go to Resume Analysis <ArrowRight size={16} /></button></>}</div></>;
 }
 
 function TestView({ category, round, questions: qs, answers, setAnswers, submitted, score, autoSubmitReason, onSubmit, onBack, go }: { category: string; round: number; questions: Question[]; answers: number[]; setAnswers: (a: number[]) => void; submitted: boolean; score: number; autoSubmitReason: string; onSubmit: (reason?: string) => void; onBack: () => void; go: (module: Module) => void }) {
@@ -1587,6 +1693,15 @@ function ComparePage({ roadmap, onProgress, go }: { roadmap: RoadmapSkill[]; onP
 function ResumeDrop({ label, file, setFile }: { label: string; file: File | null; setFile: (f: File | null) => void }) { return <div className="resume-drop"><div className="eyebrow">{label}</div><label className="drop-inner"><div className="upload-icon small"><Upload size={19} /></div><strong>{file ? file.name : 'Choose a resume'}</strong><span>PDF, DOCX or TXT</span><input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label></div>; }
 function CompareResult({ result, roadmap, reset, profile, go }: { result: { old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> }; roadmap: RoadmapSkill[]; reset: () => void; profile: Profile | null; go: (module: Module) => void }) {
   const { user, session, updateProfile } = useAuth();
+  const [workExperience, setWorkExperience] = useState<WorkExperience[]>([]);
+  useEffect(() => {
+    if (!user) { setWorkExperience([]); return; }
+    let cancelled = false;
+    supabase.from('work_experiences').select('*').eq('user_id', user.id)
+      .then(({ data }) => { if (!cancelled) setWorkExperience((data || []) as WorkExperience[]); });
+    return () => { cancelled = true; };
+  }, [user]);
+  const { years: experienceYears, level: experienceLevel } = useMemo(() => computeExperienceStats(workExperience), [workExperience]);
   const gained = result.next.skills.filter((s) => !result.old.skills.includes(s));
   const unlockedRoles = result.next.jobRoles.filter((r) => !result.old.jobRoles.some((x) => x.role === r.role));
   // Same fix as Resume Analysis's Matched Job Roles: once a target role is
@@ -1663,6 +1778,8 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
     }
     return Array.from(map.entries()).sort((a, b) => Math.max(...b[1].map((c) => c.bestMatch.matchPct)) - Math.max(...a[1].map((c) => c.bestMatch.matchPct)));
   }, [companyMatches]);
+  const topRoleName = relevantJobRoles[0]?.role;
+  const topRoleHasOwnGroup = topRoleName ? roleGroupedCompanies.some(([name]) => name.toLowerCase() === topRoleName.toLowerCase()) : true;
 
   function renderHiringRow(c: CompanyMatch) {
     const applied = appliedKeys.includes(`${c.company}::${c.bestMatch.role}`);
@@ -1671,7 +1788,7 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
     const expanded = expandedCompany === rowKey;
     return <div className="hiring-row" key={rowKey}>
       <div className="hiring-row-top"><strong>{c.company}</strong><TierBadge tier={c.tier} /><span className="matched-role-pct-mini">{c.bestMatch.matchPct}%</span></div>
-      <div className="hiring-row-meta"><CompanySalaryBadge company={c.company} role={c.bestMatch.role} location={profile?.city || profile?.state || 'India'} fallback={c.salaryBand} /></div>
+      <div className="hiring-row-meta"><CompanySalaryBadge company={c.company} role={c.bestMatch.role} location={profile?.city || profile?.state || 'India'} fallback={c.salaryBand} defaultLevel={experienceLevel} experienceYears={experienceYears} /></div>
       <div className="hiring-row-foot">
         {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> :
           <button type="button" className={expanded ? 'role-skill-missing-btn open' : 'role-skill-missing-btn'} onClick={() => setExpandedCompany(expanded ? null : rowKey)}>
@@ -1750,6 +1867,7 @@ function CompareResult({ result, roadmap, reset, profile, go }: { result: { old:
     {roleGroupedCompanies.length > 0 && <div className="content-card company-match-card">
       <SectionTitle icon={BriefcaseBusiness} title="Job offers you can go for now" action={<span className="muted-label">Grouped by role</span>} />
       <p className="missing-intro">Salary shown is that company's full range for the role, not a guaranteed offer at your match%. <TierBadge tier="Mass recruiter" /> / Tier-1 are realistic near-term targets — <TierBadge tier="Dream" /> tiers are stretch goals worth aiming for once you're truly interview-ready.</p>
+      {topRoleName && !topRoleHasOwnGroup && <p className="missing-intro company-title-note">No company below is posted under the exact title "{topRoleName}" — companies use their own titles for effectively the same domain (e.g. Security Analyst, Security Engineer). The groups below are your real, actively-hiring options in that domain.</p>}
       <div className="role-group-list">
         {roleGroupedCompanies.map(([roleName, companies]) => <div className="role-group" key={roleName}>
           <div className="role-group-head"><strong>{roleName}</strong><span className="muted-label">{companies.length} compan{companies.length === 1 ? 'y' : 'ies'} hiring</span></div>
