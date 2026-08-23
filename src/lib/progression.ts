@@ -1,5 +1,18 @@
 import type { AptitudeResult, Profile, ResumeAnalysis, ResumeComparison, RoadmapSkill } from './types';
 
+export const APTITUDE_CATEGORIES = ['Quantitative', 'Logical Reasoning', 'Verbal Ability', 'Technical MCQs'];
+
+// A single strong category (e.g. 100% on Quantitative) used to be enough on
+// its own to count as "aptitude passed" everywhere this is checked, even
+// with the other three sitting at 25% — that let a resume unlock Resume
+// Compare without actually proving readiness across the whole test. Now
+// every category must individually clear 70%.
+export function allAptitudeCategoriesPassed(results: AptitudeResult[]): boolean {
+  return APTITUDE_CATEGORIES.every((cat) =>
+    results.some((r) => r.category === cat && r.score / Math.max(r.total, 1) >= 0.7)
+  );
+}
+
 export type ModuleId = 'profile' | 'resume' | 'roadmap' | 'aptitude' | 'compare' | 'dashboard' | 'admin';
 
 export interface ProgressionState {
@@ -26,7 +39,7 @@ export function computeProgression(
   // Aptitude/Compare locked despite the roadmap looking finished.
   const knownLower = new Set((profile?.saved_skills || []).map((s) => s.toLowerCase()));
   const roadmapDone = roadmap.length > 0 && roadmap.every((s) => s.done || knownLower.has(s.skill_name.toLowerCase()));
-  const aptitudeDone = results.some((r) => r.score / Math.max(r.total, 1) >= 0.7);
+  const aptitudeDone = allAptitudeCategoriesPassed(results);
   const compareDone = comparisons.length > 0;
   return { profile: profileDone, resume: resumeDone, roadmap: roadmapDone, aptitude: aptitudeDone, compare: compareDone };
 }
@@ -53,7 +66,7 @@ export function canAccess(
     case 'compare':
       return state.aptitude
         ? { allowed: true }
-        : { allowed: false, reason: 'Score 70%+ on an aptitude test to unlock resume comparison.' };
+        : { allowed: false, reason: 'Score 70%+ on all four aptitude categories to unlock resume comparison.' };
     case 'dashboard':
       return { allowed: true };
     case 'admin':

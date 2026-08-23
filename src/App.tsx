@@ -1,6 +1,6 @@
 ﻿import { createContext, Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
-  ArrowRight, BarChart3, BookOpen, BriefcaseBusiness, Check, CheckCircle2, ChevronDown, ChevronRight, Circle,
+  ArrowRight, BarChart3, BookOpen, BriefcaseBusiness, Camera, Check, CheckCircle2, ChevronDown, ChevronRight, Circle,
   Compass, Download, ExternalLink, Eye, EyeOff, FileSearch, FileText, GraduationCap, KeyRound, LayoutDashboard, Linkedin, Lock, LogOut,
   Mail, Menu, MessageCircle, Moon, Pencil, Play, Plus, RefreshCw, Shield, ShieldCheck, Sparkles, Sun, Target,
   TrendingUp, Trash2, Trophy, Upload, UserRound, X, Zap,
@@ -15,7 +15,7 @@ import { analyzeResumeText, calculateJobRoles } from '@/lib/analysis';
 import { DEFAULT_MILESTONES, ENTRY_LEVEL_ROLE, getMissingSkills, ROLE_SKILLS } from '@/lib/roleSkills';
 import { buildJobSearchUrl, getApplications, recordApplication, updateApplicationStatus } from '@/lib/applications';
 import { QUESTIONS, getTechnicalBank, getTechnicalDomain, type Question, type QuestionDifficulty } from '@/lib/questions';
-import { canAccess, computeProgression, type ModuleId, type ProgressionState } from '@/lib/progression';
+import { allAptitudeCategoriesPassed, APTITUDE_CATEGORIES, canAccess, computeProgression, type ModuleId, type ProgressionState } from '@/lib/progression';
 import { getCategoryForRole, getRoleByTitle, getRoleGrowthSkills, getRoleRequiredSkills, getRoleRoadmap, getRolesInCategory, getToolCheck } from '@/lib/pathpilot';
 import { fetchRoadmap, fetchToolCheck, fetchCompanyMatch, fetchCombinedCompanyMatch, fetchLiveJobs, type CompanyMatch, type LiveJob, type ToolCheckItem, type GroupedOptions } from '@/lib/api';
 import { useAIRole, isKnownRole, fetchAIRole } from '@/lib/aiRoleResolver';
@@ -25,6 +25,7 @@ import { isValidEmail, isValidPhone, EMAIL_HELP_TEXT, PHONE_HELP_TEXT, parsePhon
 import { COUNTRY_DIAL_CODES } from '@/lib/countries';
 import { INDIAN_STATES, getCitiesForDistrict, getDistrictsForState } from '@/lib/india';
 import { extractResumeText } from '@/lib/resumeText';
+import { startCamera, stopCamera, detectFace, detectFacePresence, captureAveragedDescriptor, waitForLiveness, meanDistanceToReferences, loadCocoModel, FACE_MATCH_THRESHOLD } from '@/lib/faceAuth';
 import { type ApplicationStatus, type AptitudeResult, type JobApplication, type Milestone, type Profile, type ResumeAnalysis, type ResumeComparison, type RoadmapSkill, type TargetJob, type WorkExperience } from '@/lib/types';
 
 type Module = ModuleId;
@@ -172,11 +173,16 @@ function App() {
 }
 
 function AppRouter() {
-  const { loading, user, profile, passwordRecovery } = useAuth();
+  const { loading, user, profile, passwordRecovery, hasEnrolledFace } = useAuth();
   if (loading) return <LoadingScreen />;
   if (passwordRecovery) return <ResetPasswordScreen />;
   if (!user) return <AuthScreen />;
   if (profile && !profile.phone) return <PhoneGate />;
+  // hasEnrolledFace is null while the check is still in flight -- treated as
+  // "not yet known" rather than "must enroll," so this doesn't flash the
+  // enrollment screen for a frame on every load before the real answer
+  // comes back.
+  if (profile && hasEnrolledFace === false) return <FaceEnrollmentScreen />;
   return <Workspace />;
 }
 
@@ -243,6 +249,132 @@ function PhoneGate() {
         {error && <div className="form-alert error"><X size={16} />{error}</div>}
         <button className="primary-btn full" disabled={busy}>{busy ? 'Saving…' : 'Continue'}<ArrowRight size={18} /></button>
       </form>
+      <p className="switch-auth"><button onClick={signOut}>Sign out instead</button></p>
+    </div></section>
+  </main>;
+}
+
+type FaceEnrollStage = 'consent' | 'camera' | 'liveness' | 'saving';
+
+function FaceEnrollmentScreen() {
+  const { user, profile, signOut, refreshFaceEnrollment } = useAuth();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [stage, setStage] = useState<FaceEnrollStage>('consent');
+  // A plain state variable read inside pollForFace's loop would close over
+  // whatever `stage` was when that particular loop invocation started, never
+  // seeing later updates -- this ref always reflects the current value.
+  const stageRef = useRef<FaceEnrollStage>('consent');
+  const [error, setError] = useState('');
+  const [faceSeen, setFaceSeen] = useState(false);
+  const [darkGlasses, setDarkGlasses] = useState(false);
+  const [blinkFlash, setBlinkFlash] = useState(false);
+  const [captureProgress, setCaptureProgress] = useState(0);
+
+  useEffect(() => { stageRef.current = stage; }, [stage]);
+  useEffect(() => () => stopCamera(streamRef.current), []);
+
+  async function beginCamera() {
+    setError('');
+    try {
+      streamRef.current = await startCamera(videoRef.current!);
+      setStage('camera');
+      stageRef.current = 'camera';
+      pollForFace();
+    } catch {
+      setError('Camera access is required to continue. Please allow camera access and try again.');
+    }
+  }
+
+  async function pollForFace() {
+    while (videoRef.current && streamRef.current && stageRef.current === 'camera') {
+      // detectFacePresence, not detectFace -- this is just "is anyone in
+      // frame," not an identity check, so it skips the far heavier
+      // descriptor model and responds noticeably faster. Logged rather than
+      // silently swallowed -- a real detection failure (a model that failed
+      // to load, a WebGL/backend problem) used to look identical to "no
+      // face in frame yet," with nothing to diagnose it by.
+      const face = await detectFacePresence(videoRef.current).catch((err) => { console.error('Face detection failed:', err); return null; });
+      setFaceSeen(Boolean(face));
+      setDarkGlasses(Boolean(face?.darkGlasses));
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  function retryFromCamera(message: string) {
+    setError(message);
+    setStage('camera');
+    stageRef.current = 'camera';
+    pollForFace();
+  }
+
+  async function startLiveness() {
+    setStage('liveness');
+    stageRef.current = 'liveness';
+    setError('');
+    const liveness = await waitForLiveness(videoRef.current!);
+    if (!liveness) {
+      retryFromCamera("We couldn't confirm a live face -- turn your head slightly left, then back. Let's try again.");
+      return;
+    }
+    setBlinkFlash(true);
+    setTimeout(() => setBlinkFlash(false), 600);
+    await new Promise((r) => setTimeout(r, 400));
+    setStage('saving');
+    stageRef.current = 'saving';
+    // Per face-api.js's own author, on this exact symptom (a genuine same-
+    // person match occasionally landing just above the distance threshold):
+    // "match a query image to 2 or more images of reference person X and
+    // then take the mean of the distances" -- one averaged snapshot is
+    // still only one moment in time; three separate reference captures a
+    // beat apart give the login match something to average against, which
+    // is what the author recommends over just loosening the threshold.
+    const references: number[][] = [];
+    for (let i = 0; i < 3; i++) {
+      setCaptureProgress(i + 1);
+      const descriptor = await captureAveragedDescriptor(videoRef.current!, 3);
+      if (descriptor) references.push(Array.from(descriptor));
+      if (i < 2) await new Promise((r) => setTimeout(r, 500));
+    }
+    if (references.length < 2 || !user) {
+      retryFromCamera('Could not capture a clear face. Please try again.');
+      return;
+    }
+    const { error: dbError } = await supabase.from('face_enrollments').upsert({ user_id: user.id, descriptor: references });
+    stopCamera(streamRef.current);
+    streamRef.current = null;
+    if (dbError) {
+      setError(`Could not save your face enrollment: ${dbError.message}`);
+      setStage('consent');
+      stageRef.current = 'consent';
+      return;
+    }
+    await refreshFaceEnrollment();
+  }
+
+  return <main className="auth-page">
+    <section className="auth-visual">
+      <BrandLogo hero light />
+      <div className="visual-copy"><div className="eyebrow light"><span className="pulse-dot" /> ONE LAST STEP</div><h1>Verify<br /><em>it&apos;s you.</em></h1><p>Face verification is required for every account — it powers faster sign-in and keeps Aptitude Test results honest. We store only a numeric face signature, never a photo.</p></div>
+      <div className="orbit orbit-one" /><div className="orbit orbit-two" />
+    </section>
+    <section className="auth-form-wrap"><ThemeToggle className="auth-theme-toggle" /><div className="auth-form-box">
+      <div className="mobile-brand"><BrandLogo /></div>
+      <div className="auth-heading"><div className="eyebrow">{profile?.full_name ? `Welcome, ${profile.full_name.split(' ')[0]}.` : 'WELCOME'}</div><h2>Set up face verification.</h2><p>Required once. Nothing about your camera stream leaves your device except a numeric signature.</p></div>
+      <div className="camera-frame" style={stage === 'consent' ? { display: 'none' } : undefined}>
+        <video ref={videoRef} muted playsInline className="face-scan-video" />
+        <span className="camera-live-badge"><span className="camera-live-dot" /> LIVE</span>
+        {blinkFlash && <div className="blink-confirmed-flash"><CheckCircle2 size={28} /></div>}
+      </div>
+      {stage === 'consent' && <><p className="module-intro" style={{ margin: '0 0 18px' }}>By continuing you agree to let PathPilot use your camera to compute a face signature for sign-in and Aptitude Test proctoring. Your camera video is never recorded or uploaded — only the signature is stored.</p>{error && <div className="form-alert error">{error}</div>}<button className="primary-btn full" onClick={beginCamera}><Camera size={17} /> Allow camera &amp; continue</button></>}
+      {(stage === 'camera' || stage === 'liveness' || stage === 'saving') && <div className="face-scan-box">
+        {stage === 'camera' && darkGlasses && <p className="face-scan-status">Please remove your glasses/sunglasses — we can't verify your eyes through dark lenses.</p>}
+        {stage === 'camera' && !darkGlasses && <p className={faceSeen ? 'face-scan-status ok' : 'face-scan-status'}>{faceSeen ? 'Face detected — hold still.' : 'Center your face in the frame.'}</p>}
+        {stage === 'liveness' && <p className="face-scan-status ok">Turn your head slightly left, then back to center…</p>}
+        {stage === 'saving' && <p className="face-scan-status ok">Capturing reference {Math.min(captureProgress, 3)} of 3…</p>}
+        {error && <div className="form-alert error">{error}</div>}
+        {stage === 'camera' && <button className="primary-btn full" disabled={!faceSeen || darkGlasses} onClick={startLiveness}>Verify liveness <ArrowRight size={16} /></button>}
+      </div>}
       <p className="switch-auth"><button onClick={signOut}>Sign out instead</button></p>
     </div></section>
   </main>;
@@ -323,9 +455,92 @@ function LoadingScreen() {
 const ADMIN_NO_RECOVERY_EMAIL = 'yagnikchandira.23.cse@iite.indusuni.ac.in';
 
 function AuthScreen() {
-  const { signIn, signUp, signInWithEmailOtp, verifyEmailOtp, verifyPasswordResetOtp } = useAuth();
+  const { signIn, signUp, signInWithFaceScan, signInWithEmailOtp, verifyEmailOtp, verifyPasswordResetOtp } = useAuth();
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [authMethod, setAuthMethod] = useState<'password' | 'otp'>('password');
+  const [authMethod, setAuthMethod] = useState<'password' | 'otp' | 'face'>('password');
+  const faceVideoRef = useRef<HTMLVideoElement>(null);
+  const faceStreamRef = useRef<MediaStream | null>(null);
+  const [faceStage, setFaceStage] = useState<'idle' | 'camera' | 'scanning'>('idle');
+  const [faceDarkGlasses, setFaceDarkGlasses] = useState(false);
+  // Same stale-closure issue as FaceEnrollmentScreen's stageRef -- the
+  // auto-capture loop below needs to see faceStage updates immediately,
+  // not whatever it was when the loop started.
+  const faceStageRef = useRef<'idle' | 'camera' | 'scanning'>('idle');
+  useEffect(() => { faceStageRef.current = faceStage; }, [faceStage]);
+  useEffect(() => () => stopCamera(faceStreamRef.current), []);
+
+  async function startFaceScan() {
+    setError('');
+    faceFailCountRef.current = 0;
+    try {
+      faceStreamRef.current = await startCamera(faceVideoRef.current!);
+      setFaceStage('camera');
+      faceStageRef.current = 'camera';
+      autoCaptureLoop();
+    } catch {
+      setError('Camera access is required for face sign-in. Please allow camera access and try again.');
+    }
+  }
+
+  // Fires the scan itself the moment a face has been steadily in frame for
+  // a couple hundred ms, instead of waiting on a second manual click --
+  // this is most of what "should verify in 1-2 seconds" needed: opening
+  // the camera and then just standing there used to require an extra
+  // deliberate button press before anything happened.
+  async function autoCaptureLoop() {
+    let consecutiveHits = 0;
+    while (faceVideoRef.current && faceStreamRef.current && faceStageRef.current === 'camera') {
+      const present = await detectFacePresence(faceVideoRef.current).catch(() => null);
+      setFaceDarkGlasses(Boolean(present?.darkGlasses));
+      const usable = present && !present.darkGlasses;
+      consecutiveHits = usable ? consecutiveHits + 1 : 0;
+      if (consecutiveHits >= 2) { captureFaceScan(); return; }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  // Auto-capture kept re-triggering the instant it failed -- same face
+  // still in frame, so it just failed again immediately, over and over,
+  // with no way to stop it short of leaving the tab. This caps it: a
+  // failed *match* (as opposed to simply no face being visible yet) stops
+  // auto-retrying after a couple of tries and requires a deliberate click,
+  // so it can't turn into an endless loop.
+  const faceFailCountRef = useRef(0);
+
+  async function captureFaceScan() {
+    if (faceStageRef.current === 'scanning') return;
+    setFaceStage('scanning');
+    faceStageRef.current = 'scanning';
+    setError('');
+    const descriptor = await captureAveragedDescriptor(faceVideoRef.current!, 3).catch((err) => { console.error('Face detection failed during login scan:', err); return null; });
+    if (!descriptor) {
+      setError("We couldn't see a clear face. Center your face in frame and try again.");
+      setFaceStage('camera');
+      faceStageRef.current = 'camera';
+      autoCaptureLoop();
+      return;
+    }
+    setBusy(true);
+    const result = await signInWithFaceScan(Array.from(descriptor));
+    setBusy(false);
+    if (result.error) {
+      faceFailCountRef.current += 1;
+      setError(result.error);
+      setFaceStage('camera');
+      faceStageRef.current = 'camera';
+      if (faceFailCountRef.current < 2) {
+        autoCaptureLoop();
+      } else {
+        // Deliberately not calling autoCaptureLoop() again here -- that's
+        // the whole fix. The camera stays open and the manual button below
+        // still works, it just stops re-triggering itself.
+        setError(result.error + ' Auto-retry stopped after a couple of tries -- use "Scan now instead" below, or switch to Password.');
+      }
+    } else {
+      stopCamera(faceStreamRef.current);
+      faceStreamRef.current = null;
+    }
+  }
   const [forgotMode, setForgotMode] = useState(false);
   const [resetOtpSent, setResetOtpSent] = useState(false);
   const [resetOtpCode, setResetOtpCode] = useState('');
@@ -444,8 +659,24 @@ function AuthScreen() {
         {mode === 'signin' && !isNoRecoveryAccount && <div className="auth-method-tabs">
           <button type="button" className={authMethod === 'password' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('password'); setError(''); }}><Lock size={14} /> Password</button>
           <button type="button" className={authMethod === 'otp' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('otp'); setError(''); }}><KeyRound size={14} /> Email code</button>
+          <button type="button" className={authMethod === 'face' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('face'); setError(''); setFaceStage('idle'); }}><Camera size={14} /> Face scan</button>
         </div>}
-        {mode === 'signin' && authMethod === 'otp' && !isNoRecoveryAccount ? (
+        {mode === 'signin' && authMethod === 'face' && !isNoRecoveryAccount ? (
+          <div className="auth-form">
+            <p className="module-intro" style={{ margin: '0 0 4px' }}>No email needed -- your scan identifies your account.</p>
+            <div className="camera-frame" style={faceStage === 'idle' ? { display: 'none' } : undefined}>
+              <video ref={faceVideoRef} muted playsInline className="face-scan-video" />
+              <span className="camera-live-badge"><span className="camera-live-dot" /> LIVE</span>
+            </div>
+            {faceStage === 'camera' && faceDarkGlasses && <p className="face-scan-status">Please remove your glasses/sunglasses — we can't verify your eyes through dark lenses.</p>}
+            {faceStage === 'camera' && !faceDarkGlasses && <p className="face-scan-status ok">Detecting your face — signing in automatically…</p>}
+            {faceStage === 'scanning' && <p className="face-scan-status ok">Verifying…</p>}
+            {error && <div className="form-alert error"><X size={16} />{error}</div>}
+            {faceStage === 'idle' && <button type="button" className="primary-btn full" disabled={busy} onClick={startFaceScan}><Camera size={17} /> Start face scan</button>}
+            {faceStage === 'camera' && <button type="button" className="secondary-btn full" disabled={busy || faceDarkGlasses} onClick={captureFaceScan}>Scan now instead <ArrowRight size={16} /></button>}
+            {faceStage === 'scanning' && <button type="button" className="primary-btn full" disabled><RefreshCw size={16} className="spin" /> Verifying…</button>}
+          </div>
+        ) : mode === 'signin' && authMethod === 'otp' && !isNoRecoveryAccount ? (
           otpSent ? <form onSubmit={verifyOtpSubmit} className="auth-form">
             <label>Code sent to {email}<input required value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="Enter the code" inputMode="numeric" /></label>
             {error && <div className="form-alert error"><X size={16} />{error}</div>}
@@ -819,8 +1050,6 @@ function LiveJobsCard({ role, location, go }: { role?: string; location?: string
   </div>;
 }
 
-const APTITUDE_CATEGORIES = ['Quantitative', 'Logical Reasoning', 'Verbal Ability', 'Technical MCQs'];
-
 // Only the best attempt per category counts — retaking a weak category
 // shouldn't drag the score down, and a category is only as good as your best
 // shot at it, not the average of every attempt.
@@ -879,7 +1108,7 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   const displayedSkillNames = activeResume ? activeResume.skills : gainedSkillNames;
   const displayedSkillsLabel = activeResume ? `${activeResume.skills.length} skills from this resume` : `${skillsGained} skills this journey`;
   const roadmapDone = roadmap.length > 0 && roadmap.every(isRoadmapItemDone);
-  const aptitudePassed = results.some((r) => r.score / Math.max(r.total, 1) >= .7);
+  const aptitudePassed = allAptitudeCategoriesPassed(results);
   const appliedCount = applications.length;
   const profileComplete = Boolean(profile?.full_name && profile?.college && profile?.target_role);
   const displayMilestones = milestones.length ? milestones : DEFAULT_MILESTONES.map((x) => ({ ...x, id: x.key, completed: false }));
@@ -901,7 +1130,7 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   const nextLabel = readyForNextRound ? 'Grow further' : 'Continue building';
   const nextHeadline = readyForNextRound ? 'Your path is taking shape.' : `${skillsRemaining} skill video${skillsRemaining === 1 ? '' : 's'} left to close the gap.`;
   const nextSubCopy = readyForNextRound ? 'Re-analyze your resume to surface new missing skills and start a tougher round.' : 'Every skill you build is a step closer to the role you want.';
-  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} /><LiveJobsCard role={profile?.target_role} location={profile?.city || profile?.state} go={go} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Skills detected per resume analysis</span>} /><SkillGrowthChart points={growthPoints} onActiveChange={setActiveGrowthIndex} /><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{displayedSkillsLabel}</strong></div>{displayedSkillNames.length > 0 && <div className="tag-cloud growth-skills-list">{displayedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>)}</div>}</div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
+  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} /><LiveJobsCard role={profile?.target_role} location={profile?.city || profile?.state} go={go} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Skills detected per resume analysis</span>} /><SkillGrowthChart points={growthPoints} onActiveChange={setActiveGrowthIndex} /><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{displayedSkillsLabel}</strong></div><div className="tag-cloud growth-skills-list">{displayedSkillNames.length > 0 ? displayedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>) : <p className="muted">No skills detected in this resume.</p>}</div></div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
 }
 
 function SalaryCard({ profile, resume, roadmap, roadmapDone, aptitudePassed }: { profile: Profile | null; resume: ResumeAnalysis | null; roadmap: RoadmapSkill[]; roadmapDone: boolean; aptitudePassed: boolean }) {
@@ -1131,7 +1360,7 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
     return idx === -1 ? 1 : history.length - idx;
   }
 
-  return <><PageHeader eyebrow="MODULE 02 / RESUME INTELLIGENCE" title="Know your starting point."><div className="header-note"><span className="status-dot" /> Demo analysis available</div></PageHeader><div className="module-intro"><p>Upload your resume and get a clear view of your ATS readiness, strongest skills, and the roles that fit you best.</p></div>{!analysis ? <div className="upload-card"><div className="upload-icon"><Upload size={23} /></div><h2>Drop your resume here</h2><p>PDF or DOCX · Maximum 5 MB</p><label className="file-btn">Choose file<input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>{file && <div className="selected-file"><FileText size={16} /><span>{file.name}</span><button onClick={() => setFile(null)}><X size={15} /></button></div>}{error && <div className="form-alert error inline">{error}</div>}<button className="primary-btn analyze-btn" disabled={!file || busy} onClick={analyze}>{busy ? 'Reading your resume…' : 'Analyze resume'}<Sparkles size={17} /></button><small className="privacy-note"><ShieldCheck size={13} /> Your resume stays private to your workspace</small></div> : <ResumeResult analysis={analysis} round={roundOf(analysis.id)} onReset={() => setAnalysis(null)} go={go} />}{history.length > 1 && <div className="history-section"><SectionTitle icon={FileText} title="Past analyses" /><div className="history-list">{history.slice(1).map((item) => <button key={item.id} className="history-row" onClick={() => setAnalysis(item)}><FileText size={17} /><span>{item.file_name}</span><small>{new Date(item.created_at).toLocaleDateString()}</small><strong>{item.ats_score}/100</strong><ChevronRight size={15} /></button>)}</div></div>}</>;
+  return <><PageHeader eyebrow="MODULE 02 / RESUME INTELLIGENCE" title="Know your starting point."><div className="header-note"><span className="status-dot" /> Demo analysis available</div></PageHeader><div className="module-intro"><p>Upload your resume and get a clear view of your ATS readiness, strongest skills, and the roles that fit you best.</p></div>{!analysis ? <div className="upload-card"><div className="upload-icon"><Upload size={23} /></div><h2>Drop your resume here</h2><p>PDF or DOCX · Maximum 5 MB</p><label className="file-btn">Choose file<input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>{file && <div className="selected-file"><FileText size={16} /><span>{file.name}</span><button onClick={() => setFile(null)}><X size={15} /></button></div>}{error && <div className="form-alert error inline">{error}</div>}<button className="primary-btn analyze-btn" disabled={!file || busy} onClick={analyze}>{busy ? 'Reading your resume…' : 'Analyze resume'}<Sparkles size={17} /></button><small className="privacy-note"><ShieldCheck size={13} /> Your resume stays private to your workspace</small></div> : <ResumeResult analysis={analysis} round={roundOf(analysis.id)} onReset={() => setAnalysis(null)} go={go} />}{history.length > 1 && <div className="history-section"><SectionTitle icon={FileText} title="Past analysis" /><div className="history-list">{history.slice(1, 2).map((item) => <button key={item.id} className="history-row" onClick={() => setAnalysis(item)}><FileText size={17} /><span>{item.file_name}</span><small>{new Date(item.created_at).toLocaleDateString()}</small><strong>{item.ats_score}/100</strong><ChevronRight size={15} /></button>)}</div></div>}</>;
 }
 
 function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalysis; round: number; onReset: () => void; go: (module: Module) => void }) {
@@ -1664,11 +1893,12 @@ function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProg
   }
 
   useEffect(() => { if (user) supabase.from('aptitude_results').select('*').eq('user_id', user.id).then(({ data }) => setResults((data || []) as AptitudeResult[])); }, [user]);
-  // Resume Compare is gated on a 70%+ aptitude score (see progression.ts) --
-  // the bottom-of-page banner points there once that's true, but falls back
-  // to plain re-analysis (always accessible) for anyone who hasn't passed
-  // yet, so it never sends someone straight to a locked page.
-  const aptitudePassed = results.some((r) => r.score / Math.max(r.total, 1) >= .7);
+  // Resume Compare is gated on 70%+ across all four categories (see
+  // progression.ts) -- the bottom-of-page banner points there once that's
+  // true, but falls back to plain re-analysis (always accessible) for
+  // anyone who hasn't passed yet, so it never sends someone straight to a
+  // locked page.
+  const aptitudePassed = allAptitudeCategoriesPassed(results);
 
   function start(cat: string) {
     const nextRound = results.filter((r) => r.category === cat).length + 1;
@@ -1702,22 +1932,86 @@ function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProg
     }
   }
 
-  if (category) return <TestView category={category} round={round} questions={activeQuestions} answers={answers} setAnswers={setAnswers} submitted={submitted} score={score} autoSubmitReason={autoSubmitReason} onSubmit={submit} onBack={() => setCategory(null)} go={go} />;
+  if (category) return <TestView category={category} round={round} questions={activeQuestions} answers={answers} setAnswers={setAnswers} submitted={submitted} score={score} autoSubmitReason={autoSubmitReason} onSubmit={submit} onBack={() => setCategory(null)} go={go} allPassed={aptitudePassed} />;
   return <><PageHeader eyebrow="MODULE 04 / KNOWLEDGE CHECK" title="Practice with purpose." /><div className="module-intro"><p>Short, focused tests to help you turn learning into confidence. Choose a category and see where you stand. Each attempt pulls a fresh, shuffled set of questions — clear a category once and the next attempt gets harder.</p></div><div className="test-grid">{Object.keys(questions).map((cat, index) => { const attempts = results.filter((r) => r.category === cat).length; const best = results.filter((r) => r.category === cat).reduce((max, r) => Math.max(max, Math.round(r.score / r.total * 100)), 0); const icons = [BarChart3, Target, BookOpen, Zap]; const Icon = icons[index]; const bank = bankFor(cat); const tailored = cat === 'Technical MCQs' && technicalDomain; return <button className="test-card" key={cat} onClick={() => start(cat)}><div className={`test-icon icon-${index}`}><Icon size={22} /></div><div className="test-card-head"><strong>{tailored ? `${technicalDomain} MCQs` : cat}</strong><p>{Math.min(TEST_QUESTION_COUNT, bank.length)} questions · 15 min{tailored ? ' · tailored to your target role' : ''}{attempts > 0 ? ` · Round ${attempts + 1} next (harder)` : ''}</p></div><div className="test-card-foot"><span>Best score {best || '—'}%</span><ArrowRight size={15} /></div></button>; })}</div><div className="next-banner">{aptitudePassed ? <><div className="banner-icon"><FileSearch size={20} /></div><div><strong>Ready to see what's changed?</strong><p>Compare your resume against a fresh upload to see newly unlocked roles and closed skill gaps.</p></div><button onClick={() => go('compare')}>Go to Resume Compare <ArrowRight size={16} /></button></> : <><div className="banner-icon"><FileSearch size={20} /></div><div><strong>Want to sharpen your resume further?</strong><p>Re-analyze your resume anytime to catch newly missing skills and start a tougher round.</p></div><button onClick={() => go('resume')}>Go to Resume Analysis <ArrowRight size={16} /></button></>}</div></>;
 }
 
-function TestView({ category, round, questions: qs, answers, setAnswers, submitted, score, autoSubmitReason, onSubmit, onBack, go }: { category: string; round: number; questions: Question[]; answers: number[]; setAnswers: (a: number[]) => void; submitted: boolean; score: number; autoSubmitReason: string; onSubmit: (reason?: string) => void; onBack: () => void; go: (module: Module) => void }) {
+type ProctorStatus = 'checking' | 'verified' | 'denied';
+
+function TestView({ category, round, questions: qs, answers, setAnswers, submitted, score, autoSubmitReason, onSubmit, onBack, go, allPassed }: { category: string; round: number; questions: Question[]; answers: number[]; setAnswers: (a: number[]) => void; submitted: boolean; score: number; autoSubmitReason: string; onSubmit: (reason?: string) => void; onBack: () => void; go: (module: Module) => void; allPassed: boolean }) {
+  const { user } = useAuth();
   const [timeLeft, setTimeLeft] = useState(TEST_DURATION_SECONDS);
 
+  // Proctoring: a camera + identity check gates the test from starting at
+  // all (the timer below doesn't start until this is 'verified'), then the
+  // same camera stream is reused for periodic checks throughout -- no face
+  // detected, a face that doesn't match the enrolled one, a phone in frame,
+  // or a second person all reuse the exact auto-submit path the pre-existing
+  // tab-switch/copy/PrintScreen checks below already use.
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const enrolledDescriptorRef = useRef<number[] | number[][] | null>(null);
+  const missStreakRef = useRef(0);
+  const [proctorStatus, setProctorStatus] = useState<ProctorStatus>('checking');
+  const [proctorError, setProctorError] = useState('');
+  // A callback ref rather than a plain useRef -- the video element in the
+  // "checking" branch below and the small thumbnail in the "verified"
+  // branch are two different DOM nodes (React remounts across the early
+  // return), so a plain ref would leave the new node's srcObject empty
+  // even though the underlying camera stream is still running. This
+  // re-attaches the live stream the instant either node mounts.
+  const attachVideo = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (node && streamRef.current) {
+      node.srcObject = streamRef.current;
+      node.play().catch(() => {});
+    }
+  }, []);
+
+  async function logIncident(incidentType: 'no_face' | 'multiple_faces' | 'phone_detected' | 'identity_mismatch') {
+    if (!user) return;
+    try { await supabase.from('proctoring_incidents').insert({ user_id: user.id, incident_type: incidentType, category }); } catch { /* best-effort only */ }
+  }
+
+  const runProctorCheck = useCallback(async () => {
+    setProctorStatus('checking');
+    setProctorError('');
+    if (!user) { setProctorError('Sign in again to take this test.'); setProctorStatus('denied'); return; }
+    const { data } = await supabase.from('face_enrollments').select('descriptor').eq('user_id', user.id).maybeSingle();
+    if (!data) { setProctorError('Face verification is required before taking this test.'); setProctorStatus('denied'); return; }
+    enrolledDescriptorRef.current = data.descriptor as number[] | number[][];
+    if (!streamRef.current) {
+      try {
+        streamRef.current = await startCamera(videoRef.current!);
+      } catch {
+        setProctorError('Camera access is required for this test. Please allow camera access and try again.');
+        setProctorStatus('denied');
+        return;
+      }
+    }
+    const face = await detectFace(videoRef.current!).catch((err) => { console.error('Face detection failed during test pre-check:', err); return null; });
+    if (!face) { setProctorError('No face detected. Center your face in the frame and try again.'); setProctorStatus('denied'); return; }
+    if (meanDistanceToReferences(face.descriptor, enrolledDescriptorRef.current) > FACE_MATCH_THRESHOLD) {
+      setProctorError("We couldn't verify it's you. Make sure your face is clearly visible and try again.");
+      setProctorStatus('denied');
+      return;
+    }
+    missStreakRef.current = 0;
+    setProctorStatus('verified');
+  }, [user]);
+
+  useEffect(() => { runProctorCheck(); }, [runProctorCheck]);
+  useEffect(() => () => stopCamera(streamRef.current), []);
+
   useEffect(() => {
-    if (submitted) return;
+    if (submitted || proctorStatus !== 'verified') return;
     if (timeLeft <= 0) { onSubmit('Time ran out.'); return; }
     const t = setTimeout(() => setTimeLeft((s) => s - 1), 1000);
     return () => clearTimeout(t);
-  }, [timeLeft, submitted, onSubmit]);
+  }, [timeLeft, submitted, proctorStatus, onSubmit]);
 
   useEffect(() => {
-    if (submitted) return;
+    if (submitted || proctorStatus !== 'verified') return;
     function handleVisibility() { if (document.hidden) onSubmit('You switched tabs or minimized the window.'); }
     function handleBlur() { onSubmit('You switched to another window or application.'); }
     function handleCopy(e: ClipboardEvent) { e.preventDefault(); onSubmit('Copying was detected during the test.'); }
@@ -1737,11 +2031,64 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
       document.removeEventListener('copy', handleCopy);
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [submitted, onSubmit]);
+  }, [submitted, proctorStatus, onSubmit]);
+
+  // The ongoing camera check -- runs only once the pre-test check above has
+  // passed. Two consecutive missed/mismatched checks (not just one, so a
+  // single bad frame doesn't end the test) before treating it as a real
+  // identity problem.
+  useEffect(() => {
+    if (submitted || proctorStatus !== 'verified') return;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled || !videoRef.current || !streamRef.current || !enrolledDescriptorRef.current) return;
+      const face = await detectFace(videoRef.current).catch((err) => { console.error('Face detection failed during periodic proctoring check:', err); return null; });
+      if (cancelled) return;
+      if (!face || meanDistanceToReferences(face.descriptor, enrolledDescriptorRef.current) > FACE_MATCH_THRESHOLD) {
+        missStreakRef.current += 1;
+        if (missStreakRef.current >= 2) {
+          await logIncident(face ? 'identity_mismatch' : 'no_face');
+          onSubmit("We couldn't verify it was you — the test was auto-submitted.");
+        }
+        return;
+      }
+      missStreakRef.current = 0;
+      const coco = await loadCocoModel().catch(() => null);
+      if (!coco || cancelled || !videoRef.current) return;
+      const predictions = await coco.detect(videoRef.current).catch(() => []);
+      const hasPhone = predictions.some((p) => p.class === 'cell phone' && p.score > 0.5);
+      const personCount = predictions.filter((p) => p.class === 'person' && p.score > 0.5).length;
+      if (hasPhone) {
+        await logIncident('phone_detected');
+        onSubmit('A phone was detected in frame — the test was auto-submitted.');
+      } else if (personCount > 1) {
+        await logIncident('multiple_faces');
+        onSubmit('Another person was detected in frame — the test was auto-submitted.');
+      }
+    }, 6000);
+    return () => { cancelled = true; clearInterval(interval); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitted, proctorStatus, onSubmit]);
 
   const answeredCount = answers.filter((a) => a !== undefined).length;
 
-  return <><PageHeader eyebrow={`APTITUDE TEST · ROUND ${round}${round > 1 ? ' (HARDER)' : ''}`} title={category}><div className="test-header-actions">{!submitted && <span className={timeLeft <= 60 ? 'timer-pill low' : 'timer-pill'}>{formatTime(timeLeft)}</span>}<button className="secondary-btn" onClick={onBack}><ArrowRight size={15} className="back-icon" /> All categories</button></div></PageHeader>{!submitted && <p className="anti-cheat-notice"><ShieldCheck size={13} /> Stay on this tab and don't copy answers — switching tabs, windows, or copying auto-submits your test.</p>}{submitted ? <div className="test-result"><div className="result-trophy"><Trophy size={28} /></div><div className="eyebrow">TEST COMPLETE</div>{autoSubmitReason && <p className="auto-submit-note">Auto-submitted — {autoSubmitReason}</p>}<h2>You scored {score} out of {qs.length}</h2><p>{score / qs.length >= .7 ? `Excellent work. You are building real interview momentum. Round ${round + 1} will pull tougher questions.` : 'Good attempt. Review the gaps and give it another shot.'}</p><ProgressRing score={Math.round(score / qs.length * 100)} size={130} />{score / qs.length >= .7 && <button className="primary-btn" onClick={() => go('compare')}>Continue to Resume Compare <ArrowRight size={16} /></button>}<button className={score / qs.length >= .7 ? 'secondary-btn' : 'primary-btn'} onClick={() => { setAnswers([]); onBack(); }}>Back to categories <ArrowRight size={16} /></button></div> : <div className="question-list no-select" onContextMenu={(e) => e.preventDefault()}>{qs.map((q, i) => <div className="question-card" key={q.q}><div className="question-number">0{i + 1}</div><h2>{q.q}</h2><div className="options">{q.options.map((option, oi) => <button className={answers[i] === oi ? 'option selected' : 'option'} onClick={() => { const next = [...answers]; next[i] = oi; setAnswers(next); }} key={option}><span>{String.fromCharCode(65 + oi)}</span>{option}{answers[i] === oi && <Check size={16} />}</button>)}</div></div>)}<button className="primary-btn submit-test" onClick={() => onSubmit()}>Submit answers ({answeredCount}/{qs.length} answered) <ArrowRight size={17} /></button></div>}</>;
+  if (proctorStatus !== 'verified') {
+    return <><PageHeader eyebrow={`APTITUDE TEST · ROUND ${round}${round > 1 ? ' (HARDER)' : ''}`} title={category}><button className="secondary-btn" onClick={onBack}><ArrowRight size={15} className="back-icon" /> All categories</button></PageHeader>
+      <div className="content-card face-scan-box">
+        <SectionTitle icon={Camera} title="Camera check required" />
+        <p className="module-intro">This test requires a quick camera check before it starts, and stays on to keep results honest — the same camera signature used to sign in.</p>
+        <div className="camera-frame">
+          <video ref={attachVideo} muted playsInline className="face-scan-video" />
+          <span className="camera-live-badge"><span className="camera-live-dot" /> LIVE</span>
+        </div>
+        {proctorStatus === 'checking' && <p className="face-scan-status ok">Verifying…</p>}
+        {proctorError && <div className="form-alert error">{proctorError}</div>}
+        {proctorStatus === 'denied' && <button className="primary-btn full" onClick={runProctorCheck}><RefreshCw size={16} /> Try again</button>}
+      </div>
+    </>;
+  }
+
+  return <><PageHeader eyebrow={`APTITUDE TEST · ROUND ${round}${round > 1 ? ' (HARDER)' : ''}`} title={category}><div className="test-header-actions">{!submitted && <span className={timeLeft <= 60 ? 'timer-pill low' : 'timer-pill'}>{formatTime(timeLeft)}</span>}<button className="secondary-btn" onClick={onBack}><ArrowRight size={15} className="back-icon" /> All categories</button></div></PageHeader>{!submitted && <p className="anti-cheat-notice"><ShieldCheck size={13} /> Stay on this tab and don't copy answers — switching tabs, windows, or copying auto-submits your test.</p>}{!submitted && <div className="proctor-strip"><div className="camera-frame thumb"><video ref={attachVideo} muted playsInline className="face-scan-thumb" /><span className="camera-live-badge"><span className="camera-live-dot" /></span></div><span className="proctor-badge"><Camera size={12} /> Camera monitoring active</span></div>}{submitted ? <div className="test-result"><div className="result-trophy"><Trophy size={28} /></div><div className="eyebrow">TEST COMPLETE</div>{autoSubmitReason && <p className="auto-submit-note">Auto-submitted — {autoSubmitReason}</p>}<h2>You scored {score} out of {qs.length}</h2><p>{score / qs.length >= .7 ? (allPassed ? `Excellent work. You are building real interview momentum. Round ${round + 1} will pull tougher questions.` : 'Nice work on this category. Clear 70%+ on the rest to unlock Resume Compare.') : 'Good attempt. Review the gaps and give it another shot.'}</p><ProgressRing score={Math.round(score / qs.length * 100)} size={130} />{allPassed && <button className="primary-btn" onClick={() => go('compare')}>Continue to Resume Compare <ArrowRight size={16} /></button>}<button className={allPassed ? 'secondary-btn' : 'primary-btn'} onClick={() => { setAnswers([]); onBack(); }}>Back to categories <ArrowRight size={16} /></button></div> : <div className="question-list no-select" onContextMenu={(e) => e.preventDefault()}>{qs.map((q, i) => <div className="question-card" key={q.q}><div className="question-number">0{i + 1}</div><h2>{q.q}</h2><div className="options">{q.options.map((option, oi) => <button className={answers[i] === oi ? 'option selected' : 'option'} onClick={() => { const next = [...answers]; next[i] = oi; setAnswers(next); }} key={option}><span>{String.fromCharCode(65 + oi)}</span>{option}{answers[i] === oi && <Check size={16} />}</button>)}</div></div>)}<button className="primary-btn submit-test" onClick={() => onSubmit()}>Submit answers ({answeredCount}/{qs.length} answered) <ArrowRight size={17} /></button></div>}</>;
 }
 
 function ComparePage({ roadmap, onProgress, go }: { roadmap: RoadmapSkill[]; onProgress?: () => void; go: (module: Module) => void }) { const { user, profile, updateProfile, session } = useAuth(); const [oldFile, setOldFile] = useState<File | null>(null); const [newFile, setNewFile] = useState<File | null>(null); const [result, setResult] = useState<{ old: ReturnType<typeof analyzeResumeText>; next: ReturnType<typeof analyzeResumeText> } | null>(null); const [busy, setBusy] = useState(false); async function compare() { if (!oldFile || !newFile || !user) return; setBusy(true); const [{ text: oldText }, { text: newText }, experienceText] = await Promise.all([extractResumeText(oldFile), extractResumeText(newFile), fetchExperienceText(user.id)]); const old = analyzeResumeText(oldText || oldFile.name); const oldCombinedText = oldText || oldFile.name; const newCombinedText = [newText || newFile.name, experienceText].filter(Boolean).join('\n\n'); const next = analyzeResumeText(newCombinedText); setResult({ old, next }); await supabase.from('resume_comparisons').insert({ user_id: user.id, old_score: old.atsScore, new_score: next.atsScore, skills_gained: next.skills.filter((s) => !old.skills.includes(s)), new_roles: next.jobRoles.filter((r) => !old.jobRoles.some((x) => x.role === r.role)).map((r) => r.role) }); await Promise.all([oldFile, newFile].map(async (f, i) => { const isOld = i === 0; const a = isOld ? old : next; const text = isOld ? oldCombinedText : newCombinedText; const storagePath = `${user.id}/${Date.now()}-${i}-${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`; const { error: uploadError } = await supabase.storage.from('resumes').upload(storagePath, f); await supabase.from('resume_analyses').insert({ user_id: user.id, file_name: f.name, ats_score: a.atsScore, skills: a.skills, job_roles: a.jobRoles, raw_text: text, file_path: uploadError ? null : storagePath }); })); const mergedSkills = Array.from(new Set([...(profile?.saved_skills || []), ...next.skills])); await updateProfile({ saved_skills: mergedSkills }); await syncRoadmap(mergedSkills, profile?.target_role || 'Full Stack Developer', user.id); if (user.email) await logActivity(user.email, 'resume_compared', session?.access_token); onProgress?.(); setBusy(false); } return <><PageHeader eyebrow="MODULE 05 / BEFORE & AFTER" title="See your progress clearly." /><div className="module-intro"><p>Compare two versions of your resume to see what changed, what improved, and which new roles opened up.</p></div>{!result ? <><div className="compare-upload"><ResumeDrop label="OLD RESUME" file={oldFile} setFile={setOldFile} /><div className="vs-badge">VS</div><ResumeDrop label="NEW RESUME" file={newFile} setFile={setNewFile} /></div><button className="primary-btn compare-btn" disabled={!oldFile || !newFile || busy} onClick={compare}>{busy ? 'Comparing resumes…' : 'Compare resumes'}<Sparkles size={17} /></button></> : <CompareResult result={result} roadmap={roadmap} reset={() => setResult(null)} profile={profile} go={go} />}</>; }
@@ -1983,9 +2330,18 @@ interface UserActivityLogRow {
   created_at: string;
 }
 
+interface ProctoringIncidentRow {
+  id: string;
+  user_id: string;
+  incident_type: 'no_face' | 'multiple_faces' | 'phone_detected' | 'identity_mismatch';
+  category: string | null;
+  created_at: string;
+}
+
 const EMAIL_TYPE_LABELS: Record<string, string> = { signup: 'Signup confirmation', password_reset: 'Password reset', otp_code: 'Email OTP code' };
 const AUDIT_ACTION_LABELS: Record<string, string> = { view_user: 'Viewed user', delete_user: 'Deleted user' };
 const ACTIVITY_EVENT_LABELS: Record<string, string> = { login_success: 'Login', login_failed: 'Login failed', signup: 'Signup', logout: 'Logout' };
+const PROCTOR_INCIDENT_LABELS: Record<string, string> = { no_face: 'No face detected', multiple_faces: 'Multiple people detected', phone_detected: 'Phone detected', identity_mismatch: 'Face did not match' };
 
 function AdminPage() {
   const { profile, session, user } = useAuth();
@@ -1994,6 +2350,7 @@ function AdminPage() {
   const [emailLog, setEmailLog] = useState<EmailLogRow[]>([]);
   const [auditLog, setAuditLog] = useState<AdminAuditLogRow[]>([]);
   const [activityLog, setActivityLog] = useState<UserActivityLogRow[]>([]);
+  const [proctoringIncidents, setProctoringIncidents] = useState<ProctoringIncidentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -2007,6 +2364,15 @@ function AdminPage() {
   async function refreshActivityLog() {
     const { data } = await supabase.from('user_activity_log').select('*').order('created_at', { ascending: false }).limit(200);
     setActivityLog((data || []) as UserActivityLogRow[]);
+  }
+
+  // Defensive against proctoring_incidents not existing yet (same pattern
+  // as active_sessions/face_enrollments) -- an error just leaves the list
+  // empty instead of crashing the whole admin panel.
+  async function refreshProctoringIncidents() {
+    const { data, error } = await supabase.from('proctoring_incidents').select('*').order('created_at', { ascending: false }).limit(200);
+    if (error) { console.error('Proctoring incidents load failed:', error.message); return; }
+    setProctoringIncidents((data || []) as ProctoringIncidentRow[]);
   }
 
   // Full account deletion needs Supabase's Admin API (service_role key),
@@ -2053,6 +2419,7 @@ function AdminPage() {
       setEmailLog((emailLogRes.data || []) as EmailLogRow[]);
       await refreshAuditLog();
       await refreshActivityLog();
+      await refreshProctoringIncidents();
 
       const rows = (profilesRes.data || []) as AdminUserRow[];
       setUsers(rows);
@@ -2213,6 +2580,23 @@ function AdminPage() {
       </div>
       {!emailLog.length && <p className="muted">No email activity recorded yet.</p>}
     </div>}
+    {!loading && <div className="content-card">
+      <SectionTitle icon={Camera} title="Proctoring Incidents" action={<span className="muted-label">Last {proctoringIncidents.length} camera checks flagged during the Aptitude Test</span>} />
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead><tr><th>When</th><th>Learner</th><th>Category</th><th>Flagged</th></tr></thead>
+          <tbody>
+            {proctoringIncidents.map((p) => { const u = users.find((row) => row.id === p.user_id); return <tr key={p.id}>
+              <td>{new Date(p.created_at).toLocaleString()}</td>
+              <td>{u?.full_name || u?.email || p.user_id}</td>
+              <td>{p.category || '—'}</td>
+              <td><span className="skill-tag">{PROCTOR_INCIDENT_LABELS[p.incident_type] || p.incident_type}</span></td>
+            </tr>; })}
+          </tbody>
+        </table>
+      </div>
+      {!proctoringIncidents.length && <p className="muted">No proctoring incidents recorded yet.</p>}
+    </div>}
   </>;
 }
 
@@ -2293,7 +2677,7 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
   // progress, since the app itself relies on this same derived check rather
   // than always writing the flag directly.
   const roadmapAllDone = roadmap.length > 0 && roadmap.every((x) => x.done);
-  const aptitudePassed = aptitude.some((r) => r.score / Math.max(r.total, 1) >= .7);
+  const aptitudePassed = allAptitudeCategoriesPassed(aptitude);
   const profileComplete = Boolean(targetUser.full_name && targetUser.college && targetUser.target_role);
   const displayMilestones = milestones.length ? milestones : DEFAULT_MILESTONES.map((m) => ({ ...m, id: m.key, completed: false }));
   const isMilestoneDone = (m: { key: string; completed: boolean }) => m.completed
@@ -2322,10 +2706,10 @@ function AdminUserDetailPage({ user: targetUser, onBack, onViewLogged }: { user:
 
     {loading ? <div className="empty-state">Loading user data…</div> : <>
       <div className="content-card">
-        <SectionTitle icon={FileText} title="Resume history" action={<span className="muted-label">{resumes.length} analysis{resumes.length === 1 ? '' : 'es'}</span>} />
+        <SectionTitle icon={FileText} title="Resume history" action={<span className="muted-label">{resumes.length} analysis{resumes.length === 1 ? '' : 'es'} · showing latest</span>} />
         {resumes.length > 1 && <SkillGrowthChart points={[...resumes].reverse().map((r) => ({ label: new Date(r.created_at).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }), value: r.skills.length, detail: `${r.file_name} · ${new Date(r.created_at).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}` }))} />}
         {resumes.length ? <div className="admin-resume-history">
-          {resumes.map((r, i) => <div className="admin-resume-entry" key={r.id}>
+          {resumes.slice(0, 1).map((r, i) => <div className="admin-resume-entry" key={r.id}>
             <div className="admin-resume-entry-head">
               <div>
                 <strong>{r.file_name}</strong>
@@ -2631,14 +3015,44 @@ function ExperiencePanel() {
 }
 
 function ProfilePage({ go, progression }: { go: (module: Module) => void; progression: ProgressionState }) {
-  const { profile, updateProfile } = useAuth();
+  const { user, profile, updateProfile, refreshFaceEnrollment } = useAuth();
   const [tab, setTab] = useState<ProfileTab>('modules');
   const { collegeGroups, roleGroups, courseGroups, courseYears } = usePathpilotData();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<ProfileFormState>(() => buildProfileForm(profile, collegeGroups, roleGroups, courseGroups));
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [faceBusy, setFaceBusy] = useState(false);
+  const [faceConfirming, setFaceConfirming] = useState(false);
+  const [facePassword, setFacePassword] = useState('');
+  const [faceError, setFaceError] = useState('');
   useEffect(() => { setForm(buildProfileForm(profile, collegeGroups, roleGroups, courseGroups)); }, [profile, collegeGroups, roleGroups, courseGroups]);
+
+  // Deleting a face signature is a real security action (someone else's
+  // scan would otherwise start matching this account), so it re-verifies
+  // the account's password first -- signInWithPassword doubles as a
+  // password check here since Supabase has no separate "just verify this"
+  // call. Deletion flips hasEnrolledFace back to false, and the AppRouter
+  // gate that already forces enrollment for anyone without one takes over
+  // automatically, so re-scanning reuses that exact flow rather than
+  // needing a second, separate one built here.
+  async function confirmRedoFaceScan(event: FormEvent) {
+    event.preventDefault();
+    if (!user?.email) return;
+    setFaceError('');
+    setFaceBusy(true);
+    const { error: authError } = await supabase.auth.signInWithPassword({ email: user.email, password: facePassword });
+    if (authError) {
+      setFaceError('Incorrect password.');
+      setFaceBusy(false);
+      return;
+    }
+    await supabase.from('face_enrollments').delete().eq('user_id', user.id);
+    await refreshFaceEnrollment();
+    setFaceBusy(false);
+    setFaceConfirming(false);
+    setFacePassword('');
+  }
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -2665,6 +3079,7 @@ function ProfilePage({ go, progression }: { go: (module: Module) => void; progre
   const completion = Math.round(filled / 9 * 100);
 
   return <><PageHeader eyebrow="MODULE 01 / AUTH & PROFILE" title="Your career profile."><button className="secondary-btn" onClick={() => setEditing(!editing)}><Pencil size={15} /> {editing ? 'Cancel' : 'Edit profile'}</button></PageHeader><div className="profile-completion"><div><strong>Profile completion</strong><span>{completion}% — {completion === 100 ? 'Looking sharp.' : 'Add the rest to unlock your full path.'}</span></div><div className="completion-track"><div style={{ width: `${completion}%` }} /></div></div><div className="profile-page-card"><div className="profile-hero"><div className="large-avatar">{profile?.full_name?.charAt(0) || 'E'}</div><div><div className="verified"><ShieldCheck size={15} /> Verified profile</div><h2>{profile?.full_name || 'Your name'}</h2><p>{profile?.target_role || 'Choose a target role to personalize your path.'}</p></div></div>{editing ? <form onSubmit={save} className="profile-edit-form"><div className="form-grid"><label>Full name<input value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} /></label><GroupedSelect label="College / university" value={form.college} onChange={(value) => setForm({ ...form, college: value })} options={collegeGroups} placeholder="Select your university" otherLabel="Other (type your university)" otherValue={form.college_other} onOtherChange={(value) => setForm({ ...form, college_other: value })} /><GroupedSelect label="Course / branch" value={form.course} onChange={(value) => setForm({ ...form, course: value })} options={courseGroups} placeholder="Select your course" otherLabel="Other (type your course)" otherValue={form.course_other} onOtherChange={(value) => setForm({ ...form, course_other: value })} /><label>Year of study<select value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })}><option value="">Select year</option>{courseYears.map((yearOption) => <option value={yearOption} key={yearOption}>{yearOption}</option>)}</select></label><label>State<select value={form.state} onChange={(e) => setForm({ ...form, state: e.target.value, district: '' })}><option value="">Select state</option>{INDIAN_STATES.map((s) => <option value={s} key={s}>{s}</option>)}</select></label><label>District<select value={form.district} onChange={(e) => setForm({ ...form, district: e.target.value, city: '', city_other: '' })} disabled={!form.state}><option value="">{form.state ? 'Select district' : 'Select a state first'}</option>{getDistrictsForState(form.state).map((d) => <option value={d} key={d}>{d}</option>)}</select></label><label>City / Town<select value={form.city} disabled={!form.district} onChange={(e) => setForm({ ...form, city: e.target.value })}><option value="">{form.district ? 'Select your city/town' : 'Select a district first'}</option>{getCitiesForDistrict(form.district).map((c) => <option value={c} key={c}>{c}</option>)}<option value="Other (type your city)">Other (type your city)</option></select>{form.city === 'Other (type your city)' && <input value={form.city_other} onChange={(e) => setForm({ ...form, city_other: e.target.value })} placeholder="Type your city or town" />}</label><label>Phone<PhoneInput value={form.phone} onChange={(value) => setForm({ ...form, phone: value })} /></label><GroupedSelect label="Target role" value={form.target_role} onChange={(value) => setForm({ ...form, target_role: value, target_roles: [] })} options={roleGroups} placeholder="Choose a role" otherLabel="Other (type your role)" otherValue={form.role_other} onOtherChange={(value) => setForm({ ...form, role_other: value })} /></div><AdditionalRolesPicker form={form} setForm={setForm} />{error && <div className="form-alert error"><X size={16} />{error}</div>}{saved && <div className="form-alert success"><CheckCircle2 size={16} /> Profile saved.</div>}<button className="primary-btn" type="submit">Save profile <ArrowRight size={16} /></button></form> : <ProfileFields profile={profile} />}</div>{!editing && <button className="primary-btn" onClick={() => go('resume')}>Continue to resume analysis <ArrowRight size={16} /></button>}
+    {!editing && <div className="content-card face-settings-card"><SectionTitle icon={Camera} title="Face verification" /><p className="module-intro" style={{ margin: '0 0 16px' }}>Used for face-scan sign-in and Aptitude Test proctoring. Re-scanning replaces your current face signature -- useful if your appearance has changed a lot, or it's been struggling to recognize you.</p>{faceConfirming ? <form onSubmit={confirmRedoFaceScan} className="auth-form" style={{ maxWidth: 340 }}><label>Confirm your password to continue<PasswordInput value={facePassword} onChange={setFacePassword} placeholder="Your password" /></label>{faceError && <div className="form-alert error"><X size={16} />{faceError}</div>}<div style={{ display: 'flex', gap: 10 }}><button className="primary-btn" disabled={faceBusy || !facePassword}>{faceBusy ? 'Verifying…' : 'Confirm & delete'}</button><button type="button" className="secondary-btn" disabled={faceBusy} onClick={() => { setFaceConfirming(false); setFacePassword(''); setFaceError(''); }}>Cancel</button></div></form> : <button className="secondary-btn" onClick={() => setFaceConfirming(true)}><RefreshCw size={15} /> Delete & re-scan my face</button>}</div>}
     <div className="profile-tabs">
       <button className={tab === 'modules' ? 'profile-tab active' : 'profile-tab'} onClick={() => setTab('modules')}><FileText size={15} /> Modules</button>
       <button className={tab === 'target' ? 'profile-tab active' : 'profile-tab'} onClick={() => setTab('target')}><Target size={15} /> Target Job</button>

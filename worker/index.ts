@@ -836,6 +836,82 @@ async function searchJobs(request: Request, env: Env): Promise<Response> {
   return response;
 }
 
+// Matches src/lib/faceAuth.ts's client-side constant of the same name.
+// Reverted to the library author's own documented-optimal 0.6 ("I won't
+// change it") now that matching is done against the mean of three
+// reference captures instead of one single descriptor -- that's the fix
+// the author actually recommended for a genuine same-person scan landing
+// just above threshold, not a loosened cutoff.
+const FACE_MATCH_THRESHOLD = 0.6;
+
+// Identifies the account from the scan alone (1:N -- no email typed first):
+// compares the live descriptor against every enrolled face, picks the
+// closest one, and only proceeds if it's under the match threshold. Fine at
+// this app's scale (a linear scan over however many accounts have
+// enrolled); a large-scale deployment would want a vector index instead.
+// On a match, mints a real Supabase session via the Admin API's magic-link
+// generator -- but without ever emailing it. generateLink() only creates
+// the token; nothing is sent anywhere until the client redeems it via
+// verifyOtp(), which is what actually establishes the session. This keeps
+// auth on Supabase's own primitives rather than hand-rolling a custom JWT.
+async function faceLogin(request: Request, env: Env): Promise<Response> {
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) {
+    return json({ message: 'Face sign-in is not configured (missing SUPABASE_SERVICE_ROLE_KEY secret).' }, 503);
+  }
+  const body = await request.json().catch(() => null) as { descriptor?: number[] } | null;
+  const descriptor = body?.descriptor;
+  if (!Array.isArray(descriptor) || descriptor.length !== 128) {
+    return json({ message: 'Invalid face sign-in request.' }, 400);
+  }
+
+  const supabaseAdmin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const { data: enrollments, error: enrollError } = await supabaseAdmin.from('face_enrollments').select('user_id, descriptor');
+  if (enrollError) return json({ message: 'Could not complete sign-in. Try again.' }, 500);
+  if (!enrollments?.length) return json({ message: 'Face not recognized.' }, 401);
+
+  function euclidean(a: number[], b: number[]): number {
+    let sumSq = 0;
+    for (let i = 0; i < 128; i++) { const d = a[i] - b[i]; sumSq += d * d; }
+    return Math.sqrt(sumSq);
+  }
+
+  let bestUserId: string | null = null;
+  let bestDistance = Infinity;
+  for (const row of enrollments) {
+    // References is either the new format (three separate captures from
+    // enrollment, number[][]) or an older single-vector enrollment
+    // (number[]) from before that existed -- normalized to a list either
+    // way. Matching against the *mean* distance across every reference,
+    // not just the single closest one, is the library author's own
+    // documented fix for a genuine same-person scan landing just above the
+    // threshold: one snapshot is one moment in time, several give the
+    // comparison something to average against.
+    const stored = row.descriptor as number[] | number[][];
+    const references: number[][] = Array.isArray(stored[0]) ? (stored as number[][]) : [stored as number[]];
+    const distance = references.reduce((sum, ref) => sum + euclidean(ref, descriptor), 0) / references.length;
+    if (distance < bestDistance) { bestDistance = distance; bestUserId = row.user_id; }
+  }
+  if (!bestUserId || bestDistance > FACE_MATCH_THRESHOLD) {
+    // distance/threshold included so a real near-miss (the actual bug
+    // reported: a clear, well-lit face still rejected) can be measured
+    // precisely instead of guessed at blind next time -- visible in the
+    // browser's Network tab on the failed request, not shown in the UI.
+    return json({ message: 'Face not recognized. Try again or use your password.', distance: Math.round(bestDistance * 1000) / 1000, threshold: FACE_MATCH_THRESHOLD }, 401);
+  }
+
+  const { data: profile } = await supabaseAdmin.from('profiles').select('email').eq('id', bestUserId).maybeSingle();
+  if (!profile?.email) return json({ message: 'Could not complete sign-in. Try again.' }, 500);
+
+  const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({ type: 'magiclink', email: profile.email });
+  const tokenHash = linkData?.properties?.hashed_token;
+  if (linkError || !tokenHash) return json({ message: 'Could not complete sign-in. Try again.' }, 500);
+
+  return json({ token: tokenHash });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -863,6 +939,10 @@ export default {
 
     if (url.pathname === '/api/salary/lookup' && request.method === 'POST') {
       return lookupSalary(request, env);
+    }
+
+    if (url.pathname === '/api/auth/face-login' && request.method === 'POST') {
+      return faceLogin(request, env);
     }
 
     // Everything else (the SPA, its assets, and the /api/data/* routes that

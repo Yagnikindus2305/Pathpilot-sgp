@@ -9,6 +9,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Registered explicitly in main.tsx instead (with an immediate update
+      // check + forced reload on new deploy) rather than the default inject,
+      // which only checks for updates on the browser's own throttled
+      // schedule and can leave a tab on a stale bundle for a long time.
+      injectRegister: false,
       includeAssets: ['icons/apple-touch-icon.png'],
       manifest: {
         name: 'PathPilot',
