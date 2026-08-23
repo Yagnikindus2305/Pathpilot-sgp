@@ -25,7 +25,7 @@ import { isValidEmail, isValidPhone, EMAIL_HELP_TEXT, PHONE_HELP_TEXT, parsePhon
 import { COUNTRY_DIAL_CODES } from '@/lib/countries';
 import { INDIAN_STATES, getCitiesForDistrict, getDistrictsForState } from '@/lib/india';
 import { extractResumeText } from '@/lib/resumeText';
-import { startCamera, stopCamera, detectFace, detectFacePresence, captureAveragedDescriptor, waitForLiveness, meanDistanceToReferences, loadCocoModel, FACE_MATCH_THRESHOLD } from '@/lib/faceAuth';
+import { startCamera, stopCamera, detectFace, detectFacePresence, captureAveragedDescriptor, waitForLiveness, meanDistanceToReferences, loadCocoModel, cameraErrorMessage, FACE_MATCH_THRESHOLD } from '@/lib/faceAuth';
 import { type ApplicationStatus, type AptitudeResult, type JobApplication, type Milestone, type Profile, type ResumeAnalysis, type ResumeComparison, type RoadmapSkill, type TargetJob, type WorkExperience } from '@/lib/types';
 
 type Module = ModuleId;
@@ -281,8 +281,9 @@ function FaceEnrollmentScreen() {
       setStage('camera');
       stageRef.current = 'camera';
       pollForFace();
-    } catch {
-      setError('Camera access is required to continue. Please allow camera access and try again.');
+    } catch (err) {
+      console.error('Camera failed to start:', err);
+      setError(cameraErrorMessage(err));
     }
   }
 
@@ -477,8 +478,9 @@ function AuthScreen() {
       setFaceStage('camera');
       faceStageRef.current = 'camera';
       autoCaptureLoop();
-    } catch {
-      setError('Camera access is required for face sign-in. Please allow camera access and try again.');
+    } catch (err) {
+      console.error('Camera failed to start:', err);
+      setError(cameraErrorMessage(err));
     }
   }
 
@@ -1936,7 +1938,7 @@ function AptitudePage({ go, onProgress }: { go: (module: Module) => void; onProg
   return <><PageHeader eyebrow="MODULE 04 / KNOWLEDGE CHECK" title="Practice with purpose." /><div className="module-intro"><p>Short, focused tests to help you turn learning into confidence. Choose a category and see where you stand. Each attempt pulls a fresh, shuffled set of questions — clear a category once and the next attempt gets harder.</p></div><div className="test-grid">{Object.keys(questions).map((cat, index) => { const attempts = results.filter((r) => r.category === cat).length; const best = results.filter((r) => r.category === cat).reduce((max, r) => Math.max(max, Math.round(r.score / r.total * 100)), 0); const icons = [BarChart3, Target, BookOpen, Zap]; const Icon = icons[index]; const bank = bankFor(cat); const tailored = cat === 'Technical MCQs' && technicalDomain; return <button className="test-card" key={cat} onClick={() => start(cat)}><div className={`test-icon icon-${index}`}><Icon size={22} /></div><div className="test-card-head"><strong>{tailored ? `${technicalDomain} MCQs` : cat}</strong><p>{Math.min(TEST_QUESTION_COUNT, bank.length)} questions · 15 min{tailored ? ' · tailored to your target role' : ''}{attempts > 0 ? ` · Round ${attempts + 1} next (harder)` : ''}</p></div><div className="test-card-foot"><span>Best score {best || '—'}%</span><ArrowRight size={15} /></div></button>; })}</div><div className="next-banner">{aptitudePassed ? <><div className="banner-icon"><FileSearch size={20} /></div><div><strong>Ready to see what's changed?</strong><p>Compare your resume against a fresh upload to see newly unlocked roles and closed skill gaps.</p></div><button onClick={() => go('compare')}>Go to Resume Compare <ArrowRight size={16} /></button></> : <><div className="banner-icon"><FileSearch size={20} /></div><div><strong>Want to sharpen your resume further?</strong><p>Re-analyze your resume anytime to catch newly missing skills and start a tougher round.</p></div><button onClick={() => go('resume')}>Go to Resume Analysis <ArrowRight size={16} /></button></>}</div></>;
 }
 
-type ProctorStatus = 'checking' | 'verified' | 'denied';
+type ProctorStatus = 'priming' | 'checking' | 'verified' | 'denied';
 
 function TestView({ category, round, questions: qs, answers, setAnswers, submitted, score, autoSubmitReason, onSubmit, onBack, go, allPassed }: { category: string; round: number; questions: Question[]; answers: number[]; setAnswers: (a: number[]) => void; submitted: boolean; score: number; autoSubmitReason: string; onSubmit: (reason?: string) => void; onBack: () => void; go: (module: Module) => void; allPassed: boolean }) {
   const { user } = useAuth();
@@ -1952,7 +1954,13 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
   const streamRef = useRef<MediaStream | null>(null);
   const enrolledDescriptorRef = useRef<number[] | number[][] | null>(null);
   const missStreakRef = useRef(0);
-  const [proctorStatus, setProctorStatus] = useState<ProctorStatus>('checking');
+  // Starts on 'priming', not 'checking' -- jumping straight to the
+  // browser's native camera permission popup with zero explanation is a
+  // jarring, unclear ask. A short explanatory screen with its own button
+  // (matching FaceEnrollmentScreen's consent step) means the permission
+  // prompt only ever appears right after the person has already agreed to
+  // it and understands why it's needed for this specific test.
+  const [proctorStatus, setProctorStatus] = useState<ProctorStatus>('priming');
   const [proctorError, setProctorError] = useState('');
   // A callback ref rather than a plain useRef -- the video element in the
   // "checking" branch below and the small thumbnail in the "verified"
@@ -1983,8 +1991,9 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
     if (!streamRef.current) {
       try {
         streamRef.current = await startCamera(videoRef.current!);
-      } catch {
-        setProctorError('Camera access is required for this test. Please allow camera access and try again.');
+      } catch (err) {
+        console.error('Camera failed to start:', err);
+        setProctorError(cameraErrorMessage(err));
         setProctorStatus('denied');
         return;
       }
@@ -2000,7 +2009,6 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
     setProctorStatus('verified');
   }, [user]);
 
-  useEffect(() => { runProctorCheck(); }, [runProctorCheck]);
   useEffect(() => () => stopCamera(streamRef.current), []);
 
   useEffect(() => {
@@ -2076,13 +2084,14 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
     return <><PageHeader eyebrow={`APTITUDE TEST · ROUND ${round}${round > 1 ? ' (HARDER)' : ''}`} title={category}><button className="secondary-btn" onClick={onBack}><ArrowRight size={15} className="back-icon" /> All categories</button></PageHeader>
       <div className="content-card face-scan-box">
         <SectionTitle icon={Camera} title="Camera check required" />
-        <p className="module-intro">This test requires a quick camera check before it starts, and stays on to keep results honest — the same camera signature used to sign in.</p>
-        <div className="camera-frame">
+        <p className="module-intro">The Aptitude Test requires camera access, on for the whole test, to confirm it's really you answering and to catch a phone or another person in frame -- this is what keeps your results honest.</p>
+        <div className="camera-frame" style={proctorStatus === 'priming' ? { display: 'none' } : undefined}>
           <video ref={attachVideo} muted playsInline className="face-scan-video" />
           <span className="camera-live-badge"><span className="camera-live-dot" /> LIVE</span>
         </div>
         {proctorStatus === 'checking' && <p className="face-scan-status ok">Verifying…</p>}
         {proctorError && <div className="form-alert error">{proctorError}</div>}
+        {proctorStatus === 'priming' && <button className="primary-btn full" onClick={runProctorCheck}><Camera size={16} /> Allow camera &amp; start test</button>}
         {proctorStatus === 'denied' && <button className="primary-btn full" onClick={runProctorCheck}><RefreshCw size={16} /> Try again</button>}
       </div>
     </>;

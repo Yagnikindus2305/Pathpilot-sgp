@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
+import { cameraActiveCount } from './lib/faceAuth';
 import App from './App.tsx';
 import './index.css';
 
@@ -20,7 +21,16 @@ const updateSW = registerSW({
     setInterval(() => registration.update(), 20_000);
   },
   onNeedRefresh() {
-    updateSW(true);
+    // A background reload right as someone is granting camera permission,
+    // or mid face-scan/enrollment, silently discards that in-progress
+    // browser permission state -- it then looks exactly like "I allowed
+    // the camera and it's asking again." Deferred until the camera is no
+    // longer in use rather than firing immediately.
+    const tryReload = () => {
+      if (cameraActiveCount > 0) { setTimeout(tryReload, 2000); return; }
+      updateSW(true);
+    };
+    tryReload();
   },
 });
 

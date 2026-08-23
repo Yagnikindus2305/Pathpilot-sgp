@@ -1,3 +1,26 @@
+// getUserMedia failures were all being shown as one generic "camera access
+// is required" message regardless of cause -- permission actually denied,
+// no camera found, the camera already in use by another app/tab, and an
+// insecure context all need genuinely different fixes from the person
+// seeing the error, and none of them were distinguishable before this.
+export function cameraErrorMessage(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : '';
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+    return "Camera permission was denied. Check your browser's site settings and allow camera access for this page, then try again.";
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+    return 'No camera was found on this device.';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError') {
+    return 'The camera could not be started -- it may already be in use by another app or browser tab. Close it there and try again.';
+  }
+  if (name === 'OverconstrainedError') {
+    return "This device's camera doesn't support the requested video settings.";
+  }
+  const detail = err instanceof Error ? `${name || err.name || 'Error'}: ${err.message}` : String(err);
+  return `Could not access the camera (${detail}). Please try again.`;
+}
+
 // Loads @vladmandic/face-api (a maintained, TensorFlow.js-based face
 // detection/recognition library) and its model weights only when actually
 // needed -- enrollment, the face-scan login tab, and Aptitude Test
@@ -43,21 +66,34 @@ export function loadFaceApi(): Promise<FaceApiModule> {
   return apiPromise;
 }
 
+// Read by main.tsx's auto-update check before it force-reloads the page --
+// a background reload right as someone is granting camera permission or
+// mid-scan would silently discard that in-progress state, which looks
+// exactly like "I allowed it and it's asking again."
+export let cameraActiveCount = 0;
+
 export async function startCamera(video: HTMLVideoElement): Promise<MediaStream> {
-  // `ideal` rather than a hard constraint -- asks for a sharp 720p feed but
-  // still falls back gracefully on a weaker camera instead of failing
-  // outright. The old 320x240 request produced a visibly blurry preview
-  // even on cameras that could do far better.
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-    audio: false,
-  });
-  video.srcObject = stream;
-  await video.play();
-  return stream;
+  cameraActiveCount += 1;
+  try {
+    // `ideal` rather than a hard constraint -- asks for a sharp 720p feed
+    // but still falls back gracefully on a weaker camera instead of
+    // failing outright. The old 320x240 request produced a visibly blurry
+    // preview even on cameras that could do far better.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    return stream;
+  } catch (err) {
+    cameraActiveCount = Math.max(0, cameraActiveCount - 1);
+    throw err;
+  }
 }
 
 export function stopCamera(stream: MediaStream | null) {
+  if (stream) cameraActiveCount = Math.max(0, cameraActiveCount - 1);
   stream?.getTracks().forEach((t) => t.stop());
 }
 
