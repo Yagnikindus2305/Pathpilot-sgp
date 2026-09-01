@@ -2054,14 +2054,26 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
   }, [submitted, proctorStatus, onSubmit]);
 
   // The ongoing camera check -- runs only once the pre-test check above has
-  // passed. Two consecutive missed/mismatched checks (not just one, so a
-  // single bad frame doesn't end the test) before treating it as a real
-  // identity problem.
+  // passed. A fixed setInterval(fn, 6000) used to leave up to 6 real seconds
+  // of dead time between checks, wide enough for a phone to be flashed and
+  // put away again unseen -- this is now a self-scheduling loop that starts
+  // the next check the instant the previous one finishes (with only a brief
+  // cool-down so it doesn't peg the device), so monitoring tracks actual
+  // model speed instead of an arbitrary gap. Because checks now run several
+  // times more often, the miss-streak needed before treating a missing/
+  // mismatched face as a real identity problem is raised to roughly match
+  // the same real-world grace window as before, not just "2" again.
   useEffect(() => {
     if (submitted || proctorStatus !== 'verified') return;
     let cancelled = false;
-    const interval = setInterval(async () => {
-      if (cancelled || !videoRef.current || !streamRef.current || !enrolledDescriptorRef.current) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    async function tick() {
+      if (cancelled) return;
+      if (!videoRef.current || !streamRef.current || !enrolledDescriptorRef.current) {
+        timer = setTimeout(tick, 500);
+        return;
+      }
       // Face-match and object detection run independently, not one gated
       // behind the other -- holding a phone up (or a second person leaning
       // into frame) very often also throws the face check off at the same
@@ -2075,7 +2087,7 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
 
       if (!face || meanDistanceToReferences(face.descriptor, enrolledDescriptorRef.current) > FACE_MATCH_THRESHOLD) {
         missStreakRef.current += 1;
-        if (missStreakRef.current >= 2) {
+        if (missStreakRef.current >= 6) {
           await logIncident(face ? 'identity_mismatch' : 'no_face');
           onSubmit("We couldn't verify it was you — the test was auto-submitted.");
           return;
@@ -2084,19 +2096,24 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
         missStreakRef.current = 0;
       }
 
-      if (!coco || cancelled || !videoRef.current) return;
+      if (!coco || cancelled || !videoRef.current) { if (!cancelled) timer = setTimeout(tick, 400); return; }
       const predictions = await coco.detect(videoRef.current).catch((err) => { console.error('Object detection failed during periodic proctoring check:', err); return []; });
       const hasPhone = predictions.some((p) => p.class === 'cell phone' && p.score > 0.4);
       const personCount = predictions.filter((p) => p.class === 'person' && p.score > 0.5).length;
       if (hasPhone) {
         await logIncident('phone_detected');
         onSubmit('A phone was detected in frame — the test was auto-submitted.');
+        return;
       } else if (personCount > 1) {
         await logIncident('multiple_faces');
         onSubmit('Another person was detected in frame — the test was auto-submitted.');
+        return;
       }
-    }, 6000);
-    return () => { cancelled = true; clearInterval(interval); };
+      if (!cancelled) timer = setTimeout(tick, 400);
+    }
+
+    tick();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submitted, proctorStatus, onSubmit]);
 
