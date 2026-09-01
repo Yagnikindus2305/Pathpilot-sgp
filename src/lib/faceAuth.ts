@@ -84,6 +84,16 @@ export async function startCamera(video: HTMLVideoElement): Promise<MediaStream>
       audio: false,
     });
     video.srcObject = stream;
+    // The CSS box has a fixed fallback aspect-ratio, but a phone's front
+    // camera delivers a very different native shape than a laptop webcam
+    // (often close to 9:16, not the 4:3 the fallback assumes) -- with
+    // object-fit: cover, that mismatch is what crops the picture down to a
+    // zoomed-in sliver. Matching the box to the stream's actual delivered
+    // dimensions, whatever they turn out to be on this device, means cover
+    // never has excess to crop and the preview always shows the full frame.
+    const track = stream.getVideoTracks()[0];
+    const settings = track?.getSettings();
+    if (settings?.width && settings?.height) video.style.aspectRatio = `${settings.width} / ${settings.height}`;
     await video.play();
     return stream;
   } catch (err) {
@@ -273,7 +283,12 @@ export function loadCocoModel(): Promise<CocoModel> {
     cocoPromise = (async () => {
       await import('@tensorflow/tfjs');
       const cocoSsd = await import('@tensorflow-models/coco-ssd');
-      return cocoSsd.load({ base: 'lite_mobilenet_v2' });
+      // mobilenet_v2, not the lite variant -- lite_mobilenet_v2 trades
+      // accuracy for speed, and a held phone (small, thin, often at an
+      // angle) is exactly the kind of object that trade-off misses most.
+      // This only runs once every ~6s, not per-frame, so the extra
+      // compute cost is not a real constraint here.
+      return cocoSsd.load({ base: 'mobilenet_v2' });
     })();
   }
   return cocoPromise;

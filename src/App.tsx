@@ -1978,6 +1978,12 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
     videoRef.current = node;
     if (node && streamRef.current) {
       node.srcObject = streamRef.current;
+      // A fresh DOM node has no aspect-ratio style of its own -- reapply it
+      // from the live stream's real dimensions so the remounted thumb/frame
+      // still matches the actual camera shape instead of falling back to
+      // the CSS default and cropping/zooming again.
+      const settings = streamRef.current.getVideoTracks()[0]?.getSettings();
+      if (settings?.width && settings?.height) node.style.aspectRatio = `${settings.width} / ${settings.height}`;
       node.play().catch(() => {});
     }
   }, []);
@@ -2056,21 +2062,31 @@ function TestView({ category, round, questions: qs, answers, setAnswers, submitt
     let cancelled = false;
     const interval = setInterval(async () => {
       if (cancelled || !videoRef.current || !streamRef.current || !enrolledDescriptorRef.current) return;
-      const face = await detectFace(videoRef.current).catch((err) => { console.error('Face detection failed during periodic proctoring check:', err); return null; });
+      // Face-match and object detection run independently, not one gated
+      // behind the other -- holding a phone up (or a second person leaning
+      // into frame) very often also throws the face check off at the same
+      // time, so returning early on a failed face match used to skip the
+      // phone/person check on exactly the cycles it mattered most.
+      const [face, coco] = await Promise.all([
+        detectFace(videoRef.current).catch((err) => { console.error('Face detection failed during periodic proctoring check:', err); return null; }),
+        loadCocoModel().catch((err) => { console.error('Object detection model failed to load:', err); return null; }),
+      ]);
       if (cancelled) return;
+
       if (!face || meanDistanceToReferences(face.descriptor, enrolledDescriptorRef.current) > FACE_MATCH_THRESHOLD) {
         missStreakRef.current += 1;
         if (missStreakRef.current >= 2) {
           await logIncident(face ? 'identity_mismatch' : 'no_face');
           onSubmit("We couldn't verify it was you — the test was auto-submitted.");
+          return;
         }
-        return;
+      } else {
+        missStreakRef.current = 0;
       }
-      missStreakRef.current = 0;
-      const coco = await loadCocoModel().catch(() => null);
+
       if (!coco || cancelled || !videoRef.current) return;
-      const predictions = await coco.detect(videoRef.current).catch(() => []);
-      const hasPhone = predictions.some((p) => p.class === 'cell phone' && p.score > 0.5);
+      const predictions = await coco.detect(videoRef.current).catch((err) => { console.error('Object detection failed during periodic proctoring check:', err); return []; });
+      const hasPhone = predictions.some((p) => p.class === 'cell phone' && p.score > 0.4);
       const personCount = predictions.filter((p) => p.class === 'person' && p.score > 0.5).length;
       if (hasPhone) {
         await logIncident('phone_detected');
