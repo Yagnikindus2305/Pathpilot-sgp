@@ -273,6 +273,12 @@ function FaceEnrollmentScreen() {
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => () => stopCamera(streamRef.current), []);
+  // Requests the camera immediately on mount instead of waiting for a
+  // button click -- the consent text is still shown (below), just not
+  // click-gated in front of the actual permission request anymore. The
+  // button stays as a manual retry path if this first attempt fails.
+  useEffect(() => { beginCamera(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   async function beginCamera() {
     setError('');
@@ -661,7 +667,7 @@ function AuthScreen() {
         {mode === 'signin' && !isNoRecoveryAccount && <div className="auth-method-tabs">
           <button type="button" className={authMethod === 'password' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('password'); setError(''); }}><Lock size={14} /> Password</button>
           <button type="button" className={authMethod === 'otp' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('otp'); setError(''); }}><KeyRound size={14} /> Email code</button>
-          <button type="button" className={authMethod === 'face' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('face'); setError(''); setFaceStage('idle'); }}><Camera size={14} /> Face scan</button>
+          <button type="button" className={authMethod === 'face' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('face'); setError(''); startFaceScan(); }}><Camera size={14} /> Face scan</button>
         </div>}
         {mode === 'signin' && authMethod === 'face' && !isNoRecoveryAccount ? (
           <div className="auth-form">
