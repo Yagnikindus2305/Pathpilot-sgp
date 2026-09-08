@@ -15,6 +15,7 @@ export interface RecommendedCourse {
 export interface VerifiedCertificate {
   id: string;
   skillName: string;
+  skill?: string;
   provider: 'SWAYAM / NPTEL' | 'Coursera' | 'Credly' | 'edX' | 'Udemy';
   certificateId: string;
   verificationUrl: string;
