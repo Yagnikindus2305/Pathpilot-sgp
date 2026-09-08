@@ -4,13 +4,11 @@ import {
   Sparkles,
   CheckCircle2,
   AlertCircle,
-  HelpCircle,
-  Clock,
-  ArrowRight,
-  Send,
   Zap,
   ChevronRight,
   Award,
+  Lock,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   getInterviewQuestionsForRole,
@@ -38,6 +36,7 @@ export function MockInterviewModal({
   const [answerText, setAnswerText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [evaluation, setEvaluation] = useState<InterviewEvaluation | null>(null);
+  const [pasteWarning, setPasteWarning] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -56,7 +55,32 @@ export function MockInterviewModal({
   const handleNextQuestion = () => {
     setEvaluation(null);
     setAnswerText('');
+    setPasteWarning(null);
     setCurrentIndex((prev) => (prev + 1) % questions.length);
+  };
+
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newVal = e.target.value;
+    const diff = newVal.length - answerText.length;
+    // Guard against programmatic / automated paste bypass (>35 chars inserted instantly)
+    if (diff > 35) {
+      setPasteWarning('🚫 Bulk text insertion detected. Please type your response directly to demonstrate authentic communication.');
+      return;
+    }
+    if (pasteWarning) setPasteWarning(null);
+    setAnswerText(newVal);
+  };
+
+  const blockPaste = (e: React.ClipboardEvent | React.DragEvent) => {
+    e.preventDefault();
+    setPasteWarning('🚫 Copy-pasting is strictly disabled in Technical Interview Mode. Please formulate and type your own response.');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
+      setPasteWarning('🚫 Keyboard paste (Ctrl+V / Cmd+V) is disabled. Please type your answer directly.');
+    }
   };
 
   return (
@@ -71,7 +95,7 @@ export function MockInterviewModal({
             <h2>Technical Mock Interview: {targetRole || 'SOC Analyst'}</h2>
             <p>Practice real-world interview scenarios and get evaluated on the <strong>STAR Method</strong> &amp; technical depth.</p>
           </div>
-          <button className="interview-close-btn" onClick={onClose}>
+          <button className="interview-close-btn" onClick={onClose} aria-label="Close interview modal">
             <X size={18} />
           </button>
         </div>
@@ -97,8 +121,17 @@ export function MockInterviewModal({
         {/* Response Input or Evaluation Result */}
         {evaluation ? (
           <div className="interview-eval-box">
+            {evaluation.isPlagiarized && (
+              <div className="paste-warning-banner" style={{ marginBottom: 16 }}>
+                <ShieldAlert size={18} />
+                <div>
+                  <strong>Plagiarism / Benchmark Copy Flagged:</strong> Canned or copied answers score 0% to prevent interview fraud. Please articulate your own hands-on experience.
+                </div>
+              </div>
+            )}
+
             <div className="interview-eval-head">
-              <div className="interview-score-ring">
+              <div className={`interview-score-ring ${evaluation.overallScore === 0 ? 'score-zero' : ''}`}>
                 <div className="score-number">{evaluation.overallScore}%</div>
                 <div className="score-tag">INTERVIEW FIT</div>
               </div>
@@ -141,11 +174,15 @@ export function MockInterviewModal({
                 <h4>
                   <CheckCircle2 size={14} className="text-emerald" /> Key Strengths
                 </h4>
-                <ul>
-                  {evaluation.strengths.map((str, idx) => (
-                    <li key={idx}>{str}</li>
-                  ))}
-                </ul>
+                {evaluation.strengths.length > 0 ? (
+                  <ul>
+                    {evaluation.strengths.map((str, idx) => (
+                      <li key={idx}>{str}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="no-strengths-text">No technical strengths identified in this attempt.</p>
+                )}
               </div>
 
               <div className="eval-col improvements">
@@ -160,16 +197,29 @@ export function MockInterviewModal({
               </div>
             </div>
 
-            <div className="eval-model-answer">
+            <div
+              className="eval-model-answer"
+              onCopy={(e) => e.preventDefault()}
+              onContextMenu={(e) => e.preventDefault()}
+            >
               <div className="model-answer-head">
                 <Award size={14} />
                 <span>Benchmark STAR Answer (How Top 1% Candidates Answer):</span>
+                <span className="anti-cheat-pill">
+                  <Lock size={10} /> Copy-Protected
+                </span>
               </div>
-              <p className="model-answer-text">"{evaluation.modelAnswer}"</p>
+              <p className="model-answer-text select-none">"{evaluation.modelAnswer}"</p>
             </div>
 
             <div className="eval-actions-bar">
-              <button className="secondary-btn" onClick={() => setEvaluation(null)}>
+              <button
+                className="secondary-btn"
+                onClick={() => {
+                  setEvaluation(null);
+                  setPasteWarning(null);
+                }}
+              >
                 Try Answering Again
               </button>
               <button className="primary-btn next-q-btn" onClick={handleNextQuestion}>
@@ -184,14 +234,29 @@ export function MockInterviewModal({
               <span className="star-tip">
                 💡 Tip: Structure your response using <strong>Situation</strong>, <strong>Task</strong>, <strong>Action</strong>, and <strong>Result</strong>.
               </span>
-              <span className="char-count">{answerText.length} characters</span>
+              <div className="answer-box-status">
+                <span className="anti-cheat-badge">
+                  <Lock size={11} /> Anti-Cheat: Paste Disabled
+                </span>
+                <span className="char-count">{answerText.length} characters</span>
+              </div>
             </div>
+
+            {pasteWarning && (
+              <div className="paste-warning-banner">
+                <ShieldAlert size={15} />
+                <span>{pasteWarning}</span>
+              </div>
+            )}
 
             <textarea
               className="interview-textarea"
-              placeholder="Type your spoken or written response here. E.g., 'In my previous project, when our SIEM triggered... I was responsible for... So I executed the following containment steps... and the final result was...'"
+              placeholder="Type your spoken or written response directly. E.g., 'In my previous project, when our SIEM triggered... I was responsible for... So I executed the following containment steps... and the final result was...'"
               value={answerText}
-              onChange={(e) => setAnswerText(e.target.value)}
+              onChange={handleTextChange}
+              onPaste={blockPaste}
+              onDrop={blockPaste}
+              onKeyDown={handleKeyDown}
               rows={7}
             />
 
