@@ -39,7 +39,7 @@ export function cameraErrorMessage(err: unknown): string {
 // same-person scan occasionally landing just above threshold, so the
 // threshold itself doesn't need to be loosened to compensate.
 export const FACE_MATCH_THRESHOLD = 0.6;
-const MODEL_URL = '/models';
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
 
 type FaceApiModule = typeof import('@vladmandic/face-api');
 
