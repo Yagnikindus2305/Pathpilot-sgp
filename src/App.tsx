@@ -1,17 +1,27 @@
-﻿import { createContext, Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import {
-  ArrowRight, BarChart3, BookOpen, BriefcaseBusiness, Camera, Check, CheckCircle2, ChevronDown, ChevronRight, Circle,
+  AlertCircle, ArrowRight, Award, BarChart3, BookOpen, BriefcaseBusiness, Camera, Check, CheckCircle2, ChevronDown, ChevronRight, Circle,
   Compass, Download, ExternalLink, Eye, EyeOff, FileSearch, FileText, GraduationCap, KeyRound, LayoutDashboard, Linkedin, Lock, LogOut,
-  Mail, Menu, MessageCircle, Moon, Pencil, Play, Plus, RefreshCw, Shield, ShieldCheck, Sparkles, Sun, Target,
+  Mail, Menu, MessageCircle, Moon, Pencil, Play, Plus, RefreshCw, Send, Shield, ShieldCheck, Sparkles, Sun, Target,
   TrendingUp, Trash2, Trophy, Upload, UserRound, X, Zap,
 } from 'lucide-react';
 import { AuthProvider, useAuth, logActivity } from '@/context/AuthContext';
+import { AuthScreen as ModernAuthScreen } from '@/components/auth/AuthScreen';
+import { JdMatcherModal } from '@/components/careerflow/JdMatcherModal';
+import { JobRightAgent } from '@/components/jobright/JobRightAgent';
+import { SocialSonicModal } from '@/components/outreach/SocialSonicModal';
+import { CertificateVerifyModal } from '@/components/roadmap/CertificateVerifyModal';
+import { KanbanBoard } from '@/components/applications/KanbanBoard';
+import { MockInterviewModal } from '@/components/interview/MockInterviewModal';
+import { PublicPortfolioModal } from '@/components/portfolio/PublicPortfolioModal';
+import { type VerifiedCertificate } from '@/lib/courses';
+import { type JobOpening } from '@/lib/jobright';
 import yagnikPhoto from '@/assets/founders/yagnik-chandira.jpeg';
 import meetPhoto from '@/assets/founders/meet-mistry.jpeg';
 import vidhiPhoto from '@/assets/founders/vidhi-ramani.jpeg';
 import { PathpilotDataProvider, usePathpilotData } from '@/context/PathpilotDataContext';
 import { supabase } from '@/lib/supabase';
-import { analyzeResumeText, calculateJobRoles } from '@/lib/analysis';
+import { analyzeResumeText, calculateJobRoles, calculateAtsScore } from '@/lib/analysis';
 import { DEFAULT_MILESTONES, ENTRY_LEVEL_ROLE, getMissingSkills, ROLE_SKILLS } from '@/lib/roleSkills';
 import { buildJobSearchUrl, getApplications, recordApplication, updateApplicationStatus } from '@/lib/applications';
 import { QUESTIONS, getTechnicalBank, getTechnicalDomain, type Question, type QuestionDifficulty } from '@/lib/questions';
@@ -462,253 +472,7 @@ function LoadingScreen() {
 const ADMIN_NO_RECOVERY_EMAIL = 'yagnikchandira.23.cse@iite.indusuni.ac.in';
 
 function AuthScreen() {
-  const { signIn, signUp, signInWithFaceScan, signInWithEmailOtp, verifyEmailOtp, verifyPasswordResetOtp } = useAuth();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [authMethod, setAuthMethod] = useState<'password' | 'otp' | 'face'>('password');
-  const faceVideoRef = useRef<HTMLVideoElement>(null);
-  const faceStreamRef = useRef<MediaStream | null>(null);
-  const [faceStage, setFaceStage] = useState<'idle' | 'camera' | 'scanning'>('idle');
-  const [faceDarkGlasses, setFaceDarkGlasses] = useState(false);
-  // Same stale-closure issue as FaceEnrollmentScreen's stageRef -- the
-  // auto-capture loop below needs to see faceStage updates immediately,
-  // not whatever it was when the loop started.
-  const faceStageRef = useRef<'idle' | 'camera' | 'scanning'>('idle');
-  useEffect(() => { faceStageRef.current = faceStage; }, [faceStage]);
-  useEffect(() => () => stopCamera(faceStreamRef.current), []);
-
-  async function startFaceScan() {
-    setError('');
-    faceFailCountRef.current = 0;
-    try {
-      faceStreamRef.current = await startCamera(faceVideoRef.current!);
-      setFaceStage('camera');
-      faceStageRef.current = 'camera';
-      autoCaptureLoop();
-    } catch (err) {
-      console.error('Camera failed to start:', err);
-      setError(cameraErrorMessage(err));
-    }
-  }
-
-  // Fires the scan itself the moment a face has been steadily in frame for
-  // a couple hundred ms, instead of waiting on a second manual click --
-  // this is most of what "should verify in 1-2 seconds" needed: opening
-  // the camera and then just standing there used to require an extra
-  // deliberate button press before anything happened.
-  async function autoCaptureLoop() {
-    let consecutiveHits = 0;
-    while (faceVideoRef.current && faceStreamRef.current && faceStageRef.current === 'camera') {
-      const present = await detectFacePresence(faceVideoRef.current).catch(() => null);
-      setFaceDarkGlasses(Boolean(present?.darkGlasses));
-      const usable = present && !present.darkGlasses;
-      consecutiveHits = usable ? consecutiveHits + 1 : 0;
-      if (consecutiveHits >= 2) { captureFaceScan(); return; }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-
-  // Auto-capture kept re-triggering the instant it failed -- same face
-  // still in frame, so it just failed again immediately, over and over,
-  // with no way to stop it short of leaving the tab. This caps it: a
-  // failed *match* (as opposed to simply no face being visible yet) stops
-  // auto-retrying after a couple of tries and requires a deliberate click,
-  // so it can't turn into an endless loop.
-  const faceFailCountRef = useRef(0);
-
-  async function captureFaceScan() {
-    if (faceStageRef.current === 'scanning') return;
-    setFaceStage('scanning');
-    faceStageRef.current = 'scanning';
-    setError('');
-    const descriptor = await captureAveragedDescriptor(faceVideoRef.current!, 3).catch((err) => { console.error('Face detection failed during login scan:', err); return null; });
-    if (!descriptor) {
-      setError("We couldn't see a clear face. Center your face in frame and try again.");
-      setFaceStage('camera');
-      faceStageRef.current = 'camera';
-      autoCaptureLoop();
-      return;
-    }
-    setBusy(true);
-    const result = await signInWithFaceScan(Array.from(descriptor));
-    setBusy(false);
-    if (result.error) {
-      faceFailCountRef.current += 1;
-      setError(result.error);
-      setFaceStage('camera');
-      faceStageRef.current = 'camera';
-      if (faceFailCountRef.current < 2) {
-        autoCaptureLoop();
-      } else {
-        // Deliberately not calling autoCaptureLoop() again here -- that's
-        // the whole fix. The camera stays open and the manual button below
-        // still works, it just stops re-triggering itself.
-        setError(result.error + ' Auto-retry stopped after a couple of tries -- use "Scan now instead" below, or switch to Password.');
-      }
-    } else {
-      stopCamera(faceStreamRef.current);
-      faceStreamRef.current = null;
-    }
-  }
-  const [forgotMode, setForgotMode] = useState(false);
-  const [resetOtpSent, setResetOtpSent] = useState(false);
-  const [resetOtpCode, setResetOtpCode] = useState('');
-  const [email, setEmail] = useState('');
-  const isNoRecoveryAccount = email.trim().toLowerCase() === ADMIN_NO_RECOVERY_EMAIL;
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpCode, setOtpCode] = useState('');
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setError(''); setNotice('');
-    if (!isValidEmail(email)) {
-      setError(EMAIL_HELP_TEXT);
-      return;
-    }
-    if (mode === 'signup' && !isStrongPassword(password)) {
-      setError(`Choose a stronger password. ${PASSWORD_HELP_TEXT}`);
-      return;
-    }
-    if (mode === 'signup' && !isValidPhone(phone)) {
-      setError(`Enter a valid phone number. ${PHONE_HELP_TEXT}`);
-      return;
-    }
-    setBusy(true);
-    const result = mode === 'signin' ? await signIn(email, password) : await signUp(email, password, name, phone.trim());
-    if (result.error) setError(result.error);
-    else if (mode === 'signup') {
-      setNotice('Account created. You can now sign in and start building your career path.');
-      setMode('signin');
-    }
-    setBusy(false);
-  }
-
-  async function sendResetOtp(event: FormEvent) {
-    event.preventDefault();
-    setError('');
-    if (!isValidEmail(email)) { setError(EMAIL_HELP_TEXT); return; }
-    if (isNoRecoveryAccount) { setError('Password recovery is disabled for this account.'); return; }
-    setBusy(true);
-    const result = await signInWithEmailOtp(email);
-    setBusy(false);
-    if (result.error) setError(result.error); else setResetOtpSent(true);
-  }
-
-  async function verifyResetOtp(event: FormEvent) {
-    event.preventDefault();
-    setError('');
-    if (!resetOtpCode.trim()) { setError('Enter the code we sent you.'); return; }
-    setBusy(true);
-    const result = await verifyPasswordResetOtp(email, resetOtpCode.trim());
-    setBusy(false);
-    // On success, passwordRecovery flips true in AuthContext and AppRouter
-    // swaps straight to ResetPasswordScreen — nothing else to do here.
-    if (result.error) setError(result.error);
-  }
-
-  async function sendOtp(event: FormEvent) {
-    event.preventDefault();
-    setError('');
-    if (!isValidEmail(email)) { setError(EMAIL_HELP_TEXT); return; }
-    if (isNoRecoveryAccount) { setError('Email-code sign-in is disabled for this account.'); return; }
-    setBusy(true);
-    const result = await signInWithEmailOtp(email);
-    setBusy(false);
-    if (result.error) setError(result.error); else setOtpSent(true);
-  }
-
-  async function verifyOtpSubmit(event: FormEvent) {
-    event.preventDefault();
-    setError('');
-    if (!otpCode.trim()) { setError('Enter the code we sent you.'); return; }
-    setBusy(true);
-    const result = await verifyEmailOtp(email, otpCode.trim());
-    setBusy(false);
-    if (result.error) setError(result.error);
-  }
-
-  return <main className="auth-page">
-    <section className="auth-visual">
-      <BrandLogo hero light />
-      <div className="visual-copy"><div className="eyebrow light"><span className="pulse-dot" /> BUILT FOR YOUR NEXT MOVE</div><h1>Turn potential<br /><em>into placement.</em></h1><p>A focused workspace to understand your skills, sharpen your edge, and get closer to the role you want.</p></div>
-      <div className="visual-stats"><div><strong>6</strong><span>career modules</span></div><div><strong>100%</strong><span>your pace</span></div><div><strong>∞</strong><span>possibilities</span></div></div>
-      <div className="visual-about">
-        <p>PathPilot brings resume analysis, skill-gap roadmaps, aptitude testing, and progress tracking into one guided placement-prep workspace — so you always know exactly what to work on next.</p>
-        <div className="founders-row">
-          <div className="founder-avatar"><div className="founder-photo"><img src={meetPhoto} alt="Meet Mistry" /></div><small>Meet Mistry</small><a className="founder-linkedin" href="https://www.linkedin.com/in/meet-mistry-4aa8b9284" target="_blank" rel="noreferrer"><Linkedin size={14} /> LinkedIn</a></div>
-          <div className="founder-avatar"><div className="founder-photo"><img src={yagnikPhoto} alt="Yagnik Chandira" /></div><small>Yagnik Chandira</small><a className="founder-linkedin" href="https://www.linkedin.com/in/yagnik-chandira-a6b5aa2b2" target="_blank" rel="noreferrer"><Linkedin size={14} /> LinkedIn</a></div>
-          <div className="founder-avatar"><div className="founder-photo"><img src={vidhiPhoto} alt="Vidhi Ramani" style={{ transform: 'scale(1.15)', objectPosition: 'center 15%' }} /></div><small>Vidhi Ramani</small><a className="founder-linkedin" href="https://www.linkedin.com/in/vidhi-ramani-6032052a7" target="_blank" rel="noreferrer"><Linkedin size={14} /> LinkedIn</a></div>
-        </div>
-      </div>
-      <div className="orbit orbit-one" /><div className="orbit orbit-two" />
-    </section>
-    <section className="auth-form-wrap"><ThemeToggle className="auth-theme-toggle" /><div className="auth-form-box">
-      <div className="mobile-brand"><BrandLogo /></div>
-      {forgotMode ? <>
-        <div className="auth-heading"><div className="eyebrow">RESET PASSWORD</div><h2>Forgot your password?</h2><p>{resetOtpSent ? `Enter the code we sent to ${email}.` : "Enter your email and we'll send you a code."}</p></div>
-        {resetOtpSent ? <form onSubmit={verifyResetOtp} className="auth-form">
-          <label>Verification code<input required value={resetOtpCode} onChange={(e) => setResetOtpCode(e.target.value)} placeholder="Enter the code" inputMode="numeric" /></label>
-          {error && <div className="form-alert error"><X size={16} />{error}</div>}
-          <button className="primary-btn full" disabled={busy}>{busy ? 'Verifying…' : 'Verify & continue'}<ArrowRight size={18} /></button>
-          <p className="switch-auth"><button type="button" onClick={() => { setResetOtpSent(false); setResetOtpCode(''); setError(''); }}>Use a different email</button></p>
-        </form> : <form onSubmit={sendResetOtp} className="auth-form">
-          <label>Email address<input required type="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
-          {error && <div className="form-alert error"><X size={16} />{error}</div>}
-          <button className="primary-btn full" disabled={busy}>{busy ? 'Sending…' : 'Send code'}<ArrowRight size={18} /></button>
-        </form>}
-        <p className="switch-auth"><button onClick={() => { setForgotMode(false); setResetOtpSent(false); setResetOtpCode(''); setError(''); }}>Back to sign in</button></p>
-      </> : <>
-        <div className="auth-heading"><div className="eyebrow">YOUR CAREER, CLARIFIED</div><h2>{mode === 'signin' ? 'Welcome back.' : 'Start your journey.'}</h2><p>{mode === 'signin' ? 'Pick up right where you left off.' : 'Create your free workspace in under a minute.'}</p></div>
-        {mode === 'signin' && !isNoRecoveryAccount && <div className="auth-method-tabs">
-          <button type="button" className={authMethod === 'password' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('password'); setError(''); }}><Lock size={14} /> Password</button>
-          <button type="button" className={authMethod === 'otp' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('otp'); setError(''); }}><KeyRound size={14} /> Email code</button>
-          <button type="button" className={authMethod === 'face' ? 'auth-method-tab active' : 'auth-method-tab'} onClick={() => { setAuthMethod('face'); setError(''); startFaceScan(); }}><Camera size={14} /> Face scan</button>
-        </div>}
-        {mode === 'signin' && authMethod === 'face' && !isNoRecoveryAccount ? (
-          <div className="auth-form">
-            <p className="module-intro" style={{ margin: '0 0 4px' }}>No email needed -- your scan identifies your account.</p>
-            <div className="camera-frame" style={faceStage === 'idle' ? { display: 'none' } : undefined}>
-              <video ref={faceVideoRef} muted playsInline className="face-scan-video" />
-              <span className="camera-live-badge"><span className="camera-live-dot" /> LIVE</span>
-            </div>
-            {faceStage === 'camera' && faceDarkGlasses && <p className="face-scan-status">Please remove your glasses/sunglasses — we can't verify your eyes through dark lenses.</p>}
-            {faceStage === 'camera' && !faceDarkGlasses && <p className="face-scan-status ok">Detecting your face — signing in automatically…</p>}
-            {faceStage === 'scanning' && <p className="face-scan-status ok">Verifying…</p>}
-            {error && <div className="form-alert error"><X size={16} />{error}</div>}
-            {faceStage === 'idle' && <button type="button" className="primary-btn full" disabled={busy} onClick={startFaceScan}><Camera size={17} /> Start face scan</button>}
-            {faceStage === 'camera' && <button type="button" className="secondary-btn full" disabled={busy || faceDarkGlasses} onClick={captureFaceScan}>Scan now instead <ArrowRight size={16} /></button>}
-            {faceStage === 'scanning' && <button type="button" className="primary-btn full" disabled><RefreshCw size={16} className="spin" /> Verifying…</button>}
-          </div>
-        ) : mode === 'signin' && authMethod === 'otp' && !isNoRecoveryAccount ? (
-          otpSent ? <form onSubmit={verifyOtpSubmit} className="auth-form">
-            <label>Code sent to {email}<input required value={otpCode} onChange={(e) => setOtpCode(e.target.value)} placeholder="Enter the code" inputMode="numeric" /></label>
-            {error && <div className="form-alert error"><X size={16} />{error}</div>}
-            <button className="primary-btn full" disabled={busy}>{busy ? 'Verifying…' : 'Verify & sign in'}<ArrowRight size={18} /></button>
-            <p className="switch-auth"><button type="button" onClick={() => { setOtpSent(false); setOtpCode(''); setError(''); }}>Use a different email</button></p>
-          </form> : <form onSubmit={sendOtp} className="auth-form">
-            <label>Email address<input required type="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
-            {error && <div className="form-alert error"><X size={16} />{error}</div>}
-            <button className="primary-btn full" disabled={busy}>{busy ? 'Sending…' : 'Send code'}<ArrowRight size={18} /></button>
-          </form>
-        ) : <form onSubmit={submit} className="auth-form">
-          {mode === 'signup' && <label>Full name<input required value={name} onChange={(e) => setName(e.target.value)} placeholder="Aarav Sharma" /></label>}
-          <label>Email address<input required type="email" autoCapitalize="none" autoCorrect="off" spellCheck={false} autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
-          <label>Password<PasswordInput value={password} onChange={setPassword} placeholder={mode === 'signup' ? 'At least 8 characters' : 'Your password'} showStrength={mode === 'signup'} /></label>
-          {mode === 'signin' && !isNoRecoveryAccount && <button type="button" className="forgot-link" onClick={() => { setForgotMode(true); setError(''); setNotice(''); }}>Forgot password?</button>}
-          {mode === 'signup' && <label>Phone number<PhoneInput required value={phone} onChange={setPhone} /></label>}
-          {error && <div className="form-alert error"><X size={16} />{error}</div>}
-          {notice && <div className="form-alert success"><CheckCircle2 size={16} />{notice}</div>}
-          <button className="primary-btn full" disabled={busy}>{busy ? 'Please wait…' : mode === 'signin' ? 'Enter workspace' : 'Create account'}<ArrowRight size={18} /></button>
-        </form>}
-        <p className="switch-auth">{mode === 'signin' ? 'New to PathPilot?' : 'Already have an account?'} <button onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); setNotice(''); }}>{mode === 'signin' ? 'Create an account' : 'Sign in'}</button></p>
-      </>}
-    </div></section>
-  </main>;
+  return <ModernAuthScreen themeToggle={<ThemeToggle className="auth-theme-toggle" />} />;
 }
 
 function Workspace() {
@@ -750,6 +514,84 @@ function Workspace() {
   }, [user]);
   useEffect(() => { refreshProgress(); }, [refreshProgress]);
 
+  const [jdMatcherConfig, setJdMatcherConfig] = useState<{
+    isOpen: boolean;
+    role?: string;
+    jdText?: string;
+  }>({
+    isOpen: false,
+  });
+
+  const handleOpenJdMatcher = useCallback((role?: string, jdText?: string) => {
+    setJdMatcherConfig({
+      isOpen: true,
+      role: role || profile?.target_role,
+      jdText: jdText || '',
+    });
+  }, [profile?.target_role]);
+
+  const [verifiedCerts, setVerifiedCerts] = useState<VerifiedCertificate[]>(() => {
+    try {
+      const saved = localStorage.getItem('pathpilot_verified_certs');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{
+      id: 'cert-swayam-101',
+      candidateName: 'Yagnik Chandira',
+      provider: 'SWAYAM / NPTEL',
+      courseTitle: 'Introduction to Information Security & Cyber Laws (AICTE Approved)',
+      issuingInstitute: 'IIT Madras / SWAYAM',
+      verificationUrl: 'https://nptel.ac.in/noc/E_Certificate/NPTEL24CS99S1234567',
+      certificateId: 'NPTEL24CS99S1234567',
+      issueDate: '2024-11-18',
+      verifiedAt: new Date().toISOString(),
+      skill: 'Network Security',
+      isValid: true,
+    }];
+  });
+
+  const handleAddVerifiedCert = useCallback((cert: VerifiedCertificate) => {
+    setVerifiedCerts((prev) => {
+      const updated = [cert, ...prev.filter((c) => c.id !== cert.id)];
+      try {
+        localStorage.setItem('pathpilot_verified_certs', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  }, []);
+
+  const [certModalConfig, setCertModalConfig] = useState<{
+    isOpen: boolean;
+    skillName: string;
+  }>({
+    isOpen: false,
+    skillName: '',
+  });
+
+  const [mockInterviewOpen, setMockInterviewOpen] = useState(false);
+  const [publicPortfolioOpen, setPublicPortfolioOpen] = useState(false);
+
+  const [outreachData, setOutreachData] = useState<{
+    isOpen: boolean;
+    companyName: string;
+    roleTitle: string;
+    matchedSkills: string[];
+  }>({
+    isOpen: false,
+    companyName: '',
+    roleTitle: '',
+    matchedSkills: [],
+  });
+
+  const handleOpenOutreach = useCallback((companyName: string, roleTitle: string, matchedSkills: string[]) => {
+    setOutreachData({
+      isOpen: true,
+      companyName,
+      roleTitle,
+      matchedSkills,
+    });
+  }, []);
+
   function guardedNavigate(module: Module) {
     const check = canAccess(module, progression);
     if (check.allowed) { setActive(module); setGateMsg(''); }
@@ -764,8 +606,75 @@ function Workspace() {
       <div className="sidebar-bottom"><div className="tip-card"><div className="tip-icon"><Zap size={16} /></div><strong>Small steps, big shifts.</strong><p>Consistency beats intensity every time.</p></div><button className="profile-mini" onClick={() => setProfileOpen(true)}><span className="avatar">{displayName.charAt(0).toUpperCase()}</span><span className="profile-mini-text"><strong>{displayName}</strong><small>{profile?.target_role || 'Set your target role'}</small></span><Pencil size={14} /></button><ThemeToggle className="sidebar-theme-toggle" /><button className="signout" onClick={signOut}><LogOut size={15} /> Sign out</button></div>
     </aside>
     {mobileNav && <button className="nav-overlay" onClick={() => setMobileNav(false)} aria-label="Close menu" />}
-    <main className="main-content"><header className="topbar"><button className="menu-btn" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{navItems.find((x) => x.id === active)?.label || 'Dashboard'}</strong></div><div className="topbar-actions"><span className="status-pill"><span className="status-dot" /> Workspace active</span><button className="top-avatar" onClick={() => setProfileOpen(true)}>{displayName.charAt(0).toUpperCase()}</button><button className="topbar-icon-btn" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button><button className="topbar-icon-btn" onClick={signOut} title="Sign out"><LogOut size={16} /></button></div></header>{!isAdmin && <ModuleStepper active={active} progression={progression} go={guardedNavigate} />}<div className="page-wrap">{gateMsg && <div className="gate-banner"><Lock size={16} /> <span>{gateMsg}</span><button onClick={() => setGateMsg('')}><X size={15} /></button></div>}{active === 'dashboard' && <Dashboard go={guardedNavigate} />}{active === 'resume' && <ResumeAnalysisPage go={guardedNavigate} onProgress={refreshProgress} />}{active === 'roadmap' && <RoadmapPage go={guardedNavigate} onProgress={refreshProgress} />}{active === 'aptitude' && <AptitudePage go={guardedNavigate} onProgress={refreshProgress} />}{active === 'compare' && <ComparePage roadmap={roadmap} onProgress={refreshProgress} go={guardedNavigate} />}{active === 'profile' && <ProfilePage go={guardedNavigate} progression={progression} />}{active === 'admin' && <AdminPage />}</div>{!isAdmin && <WorkspaceFooter progression={progression} go={guardedNavigate} />}</main>
+    <main className="main-content"><header className="topbar"><button className="menu-btn" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{navItems.find((x) => x.id === active)?.label || 'Dashboard'}</strong></div><div className="topbar-actions"><button type="button" className="topbar-action-pill" onClick={() => setMockInterviewOpen(true)} title="AI Mock Interview Practice"><Zap size={14} /> AI Interview</button><button type="button" className="topbar-action-pill highlight" onClick={() => setPublicPortfolioOpen(true)} title="Executive Portfolio & 1-Click PDF Report"><ShieldCheck size={14} /> Portfolio (PDF)</button><span className="status-pill"><span className="status-dot" /> Workspace active</span><button className="top-avatar" onClick={() => setProfileOpen(true)}>{displayName.charAt(0).toUpperCase()}</button><button className="topbar-icon-btn" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button><button className="topbar-icon-btn" onClick={signOut} title="Sign out"><LogOut size={16} /></button></div></header>{!isAdmin && <ModuleStepper active={active} progression={progression} go={guardedNavigate} />}<div className="page-wrap">{gateMsg && <div className="gate-banner"><Lock size={16} /> <span>{gateMsg}</span><button onClick={() => setGateMsg('')}><X size={15} /></button></div>}{active === 'dashboard' && <Dashboard go={guardedNavigate} onOpenOutreach={handleOpenOutreach} onOpenJdMatcher={handleOpenJdMatcher} onOpenMockInterview={() => setMockInterviewOpen(true)} onOpenPortfolio={() => setPublicPortfolioOpen(true)} verifiedCerts={verifiedCerts} />}{active === 'resume' && <ResumeAnalysisPage go={guardedNavigate} onProgress={refreshProgress} onOpenJdMatcher={() => handleOpenJdMatcher()} onOpenOutreach={handleOpenOutreach} />}{active === 'roadmap' && <RoadmapPage go={guardedNavigate} onProgress={refreshProgress} verifiedCerts={verifiedCerts} onVerifyCert={(skill) => setCertModalConfig({ isOpen: true, skillName: skill })} />}{active === 'aptitude' && <AptitudePage go={guardedNavigate} onProgress={refreshProgress} />}{active === 'compare' && <ComparePage roadmap={roadmap} onProgress={refreshProgress} go={guardedNavigate} />}{active === 'profile' && <ProfilePage go={guardedNavigate} progression={progression} />}{active === 'admin' && <AdminPage />}</div>{!isAdmin && <WorkspaceFooter progression={progression} go={guardedNavigate} />}</main>
     {profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} updateProfile={updateProfile} />}
+    {jdMatcherConfig.isOpen && (
+      <JdMatcherModal
+        isOpen={jdMatcherConfig.isOpen}
+        onClose={() => setJdMatcherConfig((prev) => ({ ...prev, isOpen: false }))}
+        resumeText={resume?.raw_text || resume?.file_name || ''}
+        resumeSkills={resume?.skills || []}
+        initialRole={jdMatcherConfig.role || profile?.target_role}
+        initialJdText={jdMatcherConfig.jdText || ''}
+        onAddSkillToRoadmap={async (skill) => {
+          if (!user) return;
+          await supabase.from('roadmap_skills').upsert({
+            user_id: user.id,
+            skill_name: skill,
+            priority: 'Must Have',
+            done: false,
+          }, { onConflict: 'user_id,skill_name' });
+          refreshProgress();
+        }}
+      />
+    )}
+    {outreachData.isOpen && (
+      <SocialSonicModal
+        isOpen={outreachData.isOpen}
+        onClose={() => setOutreachData((prev) => ({ ...prev, isOpen: false }))}
+        candidateName={profile?.full_name || user?.email?.split('@')[0] || 'Candidate'}
+        companyName={outreachData.companyName}
+        roleTitle={outreachData.roleTitle}
+        matchedSkills={outreachData.matchedSkills}
+        college={profile?.college}
+      />
+    )}
+    {certModalConfig.isOpen && (
+      <CertificateVerifyModal
+        isOpen={certModalConfig.isOpen}
+        onClose={() => setCertModalConfig({ isOpen: false, skillName: '' })}
+        skillName={certModalConfig.skillName}
+        candidateName={profile?.full_name || displayName}
+        onCertificateVerified={async (cert) => {
+          handleAddVerifiedCert(cert);
+          if (user) {
+            await supabase.from('roadmap_skills').upsert({
+              user_id: user.id,
+              skill_name: cert.skill,
+              priority: 'Must Have',
+              done: true,
+            }, { onConflict: 'user_id,skill_name' });
+            refreshProgress();
+          }
+        }}
+      />
+    )}
+    {mockInterviewOpen && (
+      <MockInterviewModal
+        isOpen={mockInterviewOpen}
+        onClose={() => setMockInterviewOpen(false)}
+        targetRole={profile?.target_role || 'SOC Analyst'}
+      />
+    )}
+    {publicPortfolioOpen && (
+      <PublicPortfolioModal
+        isOpen={publicPortfolioOpen}
+        onClose={() => setPublicPortfolioOpen(false)}
+        profile={profile}
+        resume={resume}
+        verifiedCertificates={verifiedCerts}
+      />
+    )}
   </div>;
 }
 
@@ -830,17 +739,48 @@ function RadarChart({ data, size = 240 }: { data: { label: string; value: number
 // into an unreadable mess) — click or tap a point to see exactly what it
 // means: its value, date, and an optional detail string (e.g. the resume
 // file name), shown in a small card below the chart.
-function SkillGrowthChart({ points, height = 168, onActiveChange }: { points: { label: string; value: number; detail?: string }[]; height?: number; onActiveChange?: (index: number | null) => void }) {
+function getSmoothSplinePath(points: { x: number; y: number }[]): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  if (points.length === 2) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)} L ${points[1].x.toFixed(1)} ${points[1].y.toFixed(1)}`;
+  let path = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[Math.min(points.length - 1, i + 2)];
+    const cp1x = p1.x + (p2.x - p0.x) / 6;
+    const cp1y = p1.y + (p2.y - p0.y) / 6;
+    const cp2x = p2.x - (p3.x - p1.x) / 6;
+    const cp2y = p2.y - (p3.y - p1.y) / 6;
+    path += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+  return path;
+}
+
+function SkillGrowthChart({ points, height = 175, onActiveChange }: { points: { label: string; value: number; detail?: string }[]; height?: number; onActiveChange?: (index: number | null) => void }) {
   const gradId = useId();
-  const [activeIndex, setActiveIndexState] = useState<number | null>(null);
-  const setActiveIndex = (index: number | null) => { setActiveIndexState(index); onActiveChange?.(index); };
+  const glowId = useId();
+  const [activeIndex, setActiveIndexState] = useState<number | null>(() => (points.length > 0 ? points.length - 1 : null));
+  const setActiveIndex = useCallback((index: number | null) => {
+    setActiveIndexState(index);
+    onActiveChange?.(index);
+  }, [onActiveChange]);
+
+  useEffect(() => {
+    if (points.length > 0 && activeIndex === null) {
+      setActiveIndex(points.length - 1);
+    }
+  }, [points.length, activeIndex, setActiveIndex]);
+
   if (points.length === 0) {
     return <div className="empty-state growth-chart-empty">Analyze a resume to start tracking growth here.</div>;
   }
+
   const width = 560;
-  const padTop = 20;
-  const padBottom = 26;
-  const padX = 12;
+  const padTop = 22;
+  const padBottom = 28;
+  const padX = 14;
   const chartW = width - padX * 2;
   const chartH = height - padTop - padBottom;
   const max = Math.max(...points.map((p) => p.value), 1);
@@ -850,35 +790,125 @@ function SkillGrowthChart({ points, height = 168, onActiveChange }: { points: { 
     y: padTop + chartH - (p.value / max) * chartH,
     ...p,
   }));
-  const linePath = coords.map((c, i) => `${i === 0 ? 'M' : 'L'} ${c.x.toFixed(1)} ${c.y.toFixed(1)}`).join(' ');
-  const areaPath = `${linePath} L ${coords[coords.length - 1].x.toFixed(1)} ${padTop + chartH} L ${coords[0].x.toFixed(1)} ${padTop + chartH} Z`;
-  // Thin the date labels under the axis to at most ~8, however many points
-  // there are — a chart with two dozen resumes would otherwise print two
-  // dozen overlapping dates.
+
+  const splineLinePath = getSmoothSplinePath(coords);
+  const baselineY = padTop + chartH;
+  const splineAreaPath = `${splineLinePath} L ${coords[coords.length - 1].x.toFixed(1)} ${baselineY} L ${coords[0].x.toFixed(1)} ${baselineY} Z`;
+
   const labelEvery = Math.max(1, Math.ceil(points.length / 8));
-  const active = activeIndex != null ? coords[activeIndex] : null;
+  const isDense = points.length > 18;
+  const active = activeIndex != null && activeIndex >= 0 && activeIndex < coords.length ? coords[activeIndex] : null;
+
+  const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (coords.length <= 1) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relX = ((e.clientX - rect.left) / rect.width) * width;
+    let closestIdx = 0;
+    let closestDist = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const dist = Math.abs(coords[i].x - relX);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestIdx = i;
+      }
+    }
+    if (closestIdx !== activeIndex) {
+      setActiveIndex(closestIdx);
+    }
+  };
+
   return <div className="growth-chart-wrap">
-    <svg width="100%" viewBox={`0 0 ${width} ${height}`} className="growth-line-chart" preserveAspectRatio="none">
+    <svg
+      width="100%"
+      viewBox={`0 0 ${width} ${height}`}
+      className="growth-line-chart"
+      preserveAspectRatio="none"
+      onMouseMove={handleSvgMouseMove}
+      style={{ cursor: 'crosshair' }}
+    >
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#4d69db" stopOpacity="0.32" />
-          <stop offset="100%" stopColor="#4d69db" stopOpacity="0" />
+          <stop offset="0%" stopColor="#6366f1" stopOpacity="0.38" />
+          <stop offset="60%" stopColor="#6366f1" stopOpacity="0.08" />
+          <stop offset="100%" stopColor="#6366f1" stopOpacity="0.00" />
         </linearGradient>
+        <filter id={glowId} x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#6366f1" floodOpacity="0.45" />
+        </filter>
       </defs>
-      <path d={areaPath} fill={`url(#${gradId})`} />
-      <path d={linePath} fill="none" stroke="#3b5bdb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-      {coords.map((c, i) => <g key={i}>
-        {i % labelEvery === 0 && <text x={c.x} y={height - 6} textAnchor="middle" className="growth-chart-label">{c.label}</text>}
-        <circle
-          cx={c.x} cy={c.y} r={activeIndex === i ? 6 : 4}
-          className={activeIndex === i ? 'growth-chart-dot active' : 'growth-chart-dot'}
-          onClick={() => setActiveIndex(activeIndex === i ? null : i)}
-          onMouseEnter={() => setActiveIndex(i)}
+
+      {/* Baseline guide line */}
+      <line x1={padX} y1={baselineY} x2={width - padX} y2={baselineY} stroke="var(--border)" strokeDasharray="4 4" strokeWidth="1" opacity="0.75" />
+
+      {/* Area fill */}
+      <path d={splineAreaPath} fill={`url(#${gradId})`} />
+
+      {/* Smooth spline curve */}
+      <path
+        d={splineLinePath}
+        fill="none"
+        stroke="#6366f1"
+        strokeWidth="2.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        filter={`url(#${glowId})`}
+      />
+
+      {/* Interactive cursor line on active point */}
+      {active && (
+        <line
+          x1={active.x}
+          y1={padTop - 4}
+          x2={active.x}
+          y2={baselineY}
+          stroke="rgba(99, 102, 241, 0.45)"
+          strokeWidth="1.5"
+          strokeDasharray="3 3"
         />
-      </g>)}
+      )}
+
+      {/* Point pips */}
+      {coords.map((c, i) => {
+        const isCurrentActive = activeIndex === i;
+        if (isDense && !isCurrentActive && i % 2 !== 0 && c.value === 0) {
+          return null;
+        }
+        return (
+          <g key={i}>
+            {i % labelEvery === 0 && (
+              <text x={c.x} y={height - 7} textAnchor="middle" className="growth-chart-label">
+                {c.label}
+              </text>
+            )}
+            <circle
+              cx={c.x}
+              cy={c.y}
+              r={isCurrentActive ? 5.5 : isDense ? 2.5 : 3.5}
+              className={isCurrentActive ? 'growth-chart-dot active' : 'growth-chart-dot'}
+              onClick={() => setActiveIndex(i)}
+            />
+          </g>
+        );
+      })}
+
+      {/* Glowing pulse ring around active point */}
+      {active && (
+        <g pointerEvents="none">
+          <circle cx={active.x} cy={active.y} r={11} fill="rgba(99, 102, 241, 0.22)" className="pulse-indicator-circle" />
+          <circle cx={active.x} cy={active.y} r={5.5} fill="#6366f1" stroke="#ffffff" strokeWidth="2.2" />
+        </g>
+      )}
     </svg>
+
     <div className="growth-chart-tooltip">
-      {active ? <><strong>{active.value} skill{active.value === 1 ? '' : 's'} detected</strong><span>{active.detail || active.label}</span></> : <span className="muted-label">Click a point on the line to see what it means.</span>}
+      {active ? (
+        <>
+          <strong>{active.value} skill{active.value === 1 ? '' : 's'} detected</strong>
+          <span>{active.detail || active.label}</span>
+        </>
+      ) : (
+        <span className="muted-label">Hover or tap any point to inspect skills.</span>
+      )}
     </div>
   </div>;
 }
@@ -1068,10 +1098,47 @@ function bestAttemptPct(results: AptitudeResult[], category: string): number {
 }
 const APPLICATION_STATUSES: ApplicationStatus[] = ['Applied', 'Interviewing', 'Offer', 'Rejected'];
 
-function ApplicationsCard({ applications, onStatusChange }: { applications: JobApplication[]; onStatusChange: (id: string, status: ApplicationStatus) => void }) {
+function ApplicationsCard({
+  applications,
+  onStatusChange,
+  onOpenOutreach,
+  onOpenJdMatcher,
+}: {
+  applications: JobApplication[];
+  onStatusChange: (id: string, status: ApplicationStatus) => void;
+  onOpenOutreach?: (company: string, role: string) => void;
+  onOpenJdMatcher?: (role: string, desc: string) => void;
+}) {
+  const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
+
   return <div className="content-card">
-    <SectionTitle icon={BriefcaseBusiness} title="My Applications" action={<span className="muted-label">{Math.min(applications.length, 10)}/10 tracked</span>} />
-    {applications.length === 0 ? <div className="empty-state"><BriefcaseBusiness size={26} /><strong>No applications yet.</strong><p>Click Apply on a matched role in Resume Analysis to start tracking.</p></div> : <div className="applications-list">
+    <div className="applications-card-header">
+      <SectionTitle icon={BriefcaseBusiness} title="My Applications Pipeline" action={<span className="muted-label">{Math.min(applications.length, 10)}/10 tracked</span>} />
+      <div className="view-mode-tabs">
+        <button
+          type="button"
+          className={`view-tab-btn ${viewMode === 'kanban' ? 'active' : ''}`}
+          onClick={() => setViewMode('kanban')}
+        >
+          Kanban Board
+        </button>
+        <button
+          type="button"
+          className={`view-tab-btn ${viewMode === 'list' ? 'active' : ''}`}
+          onClick={() => setViewMode('list')}
+        >
+          List View
+        </button>
+      </div>
+    </div>
+    {applications.length === 0 ? <div className="empty-state"><BriefcaseBusiness size={26} /><strong>No applications yet.</strong><p>Click Apply on a matched role in Resume Analysis or Job Openings to start tracking.</p></div> : viewMode === 'kanban' ? (
+      <KanbanBoard
+        applications={applications}
+        onStatusChange={onStatusChange}
+        onOpenOutreach={onOpenOutreach}
+        onOpenJdMatcher={onOpenJdMatcher}
+      />
+    ) : <div className="applications-list">
       {applications.map((app) => <div className="application-row" key={app.id}>
         <div className="application-info"><strong>{app.role}</strong><span>{app.company}</span></div>
         <select value={app.status} onChange={(e) => onStatusChange(app.id, e.target.value as ApplicationStatus)} className={`status-select status-${app.status.toLowerCase()}`}>
@@ -1083,8 +1150,22 @@ function ApplicationsCard({ applications, onStatusChange }: { applications: JobA
   </div>;
 }
 
-function Dashboard({ go }: { go: (module: Module) => void }) {
-  const { user, profile } = useAuth();
+function Dashboard({
+  go,
+  onOpenOutreach,
+  onOpenJdMatcher,
+  onOpenMockInterview,
+  onOpenPortfolio,
+  verifiedCerts = [],
+}: {
+  go: (module: Module) => void;
+  onOpenOutreach?: (company: string, role: string, skills: string[]) => void;
+  onOpenJdMatcher?: (role?: string, jdText?: string) => void;
+  onOpenMockInterview?: () => void;
+  onOpenPortfolio?: () => void;
+  verifiedCerts?: VerifiedCertificate[];
+}) {
+  const { user, profile, session } = useAuth();
   const [resume, setResume] = useState<ResumeAnalysis | null>(null); const [results, setResults] = useState<AptitudeResult[]>([]); const [roadmap, setRoadmap] = useState<RoadmapSkill[]>([]); const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [applications, setApplications] = useState<JobApplication[]>([]);
   const [resumeHistory, setResumeHistory] = useState<ResumeAnalysis[]>([]);
@@ -1138,7 +1219,7 @@ function Dashboard({ go }: { go: (module: Module) => void }) {
   const nextLabel = readyForNextRound ? 'Grow further' : 'Continue building';
   const nextHeadline = readyForNextRound ? 'Your path is taking shape.' : `${skillsRemaining} skill video${skillsRemaining === 1 ? '' : 's'} left to close the gap.`;
   const nextSubCopy = readyForNextRound ? 'Re-analyze your resume to surface new missing skills and start a tougher round.' : 'Every skill you build is a step closer to the role you want.';
-  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} /><LiveJobsCard role={profile?.target_role} location={profile?.city || profile?.state} go={go} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Skills detected per resume analysis</span>} /><SkillGrowthChart points={growthPoints} onActiveChange={setActiveGrowthIndex} /><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{displayedSkillsLabel}</strong></div><div className="tag-cloud growth-skills-list">{displayedSkillNames.length > 0 ? displayedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>) : <p className="muted">No skills detected in this resume.</p>}</div></div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
+  return <><PageHeader eyebrow="YOUR MOMENTUM" title={`Good to see you, ${profile?.full_name?.split(' ')[0] || 'Explorer'}.`}><button className="secondary-btn" onClick={() => go('profile')}><UserRound size={16} /> Edit profile</button></PageHeader><div className="welcome-strip"><div className="welcome-icon"><Sparkles size={21} /></div><div><strong>{nextHeadline}</strong><p>{nextSubCopy}</p></div><button onClick={() => go(nextModule)}>{nextLabel} <ArrowRight size={16} /></button></div><div className="supercharged-hero-strip"><div className="supercharged-card"><div className="supercharged-badge"><Zap size={14} /> AI PREP COACH</div><h4>Technical Mock Interview</h4><p>Role-aligned technical questions scored on the STAR framework with instant benchmark answers.</p><button type="button" className="supercharged-btn" onClick={onOpenMockInterview}>Start Interview <ChevronRight size={14} /></button></div><div className="supercharged-card gold"><div className="supercharged-badge gold"><ShieldCheck size={14} /> FAKE-PROOF CREDENTIALS</div><h4>Executive Portfolio & PDF Proof</h4><p>Verified SWAYAM/NPTEL & Coursera badges with 1-click printable PDF candidate dossier.</p><button type="button" className="supercharged-btn gold" onClick={onOpenPortfolio}>Open Dossier (PDF) <ExternalLink size={14} /></button></div></div><div className="metric-grid"><MetricCard label="Resume score" value={resume ? `${resume.ats_score}` : '—'} suffix={resume ? '/100' : ''} icon={FileSearch} color="blue" onClick={() => go('resume')} /><MetricCard label="Skills gained" value={String(skillsGained)} suffix="" icon={TrendingUp} color="green" onClick={() => go('roadmap')} /><MetricCard label="Tests completed" value={String(results.length)} suffix="" icon={GraduationCap} color="orange" onClick={() => go('aptitude')} /><MetricCard label="Avg. aptitude" value={avg ? `${avg}%` : '—'} suffix="" icon={Trophy} color="navy" onClick={() => go('aptitude')} /></div><SalaryCard profile={profile} resume={resume} roadmap={roadmap} roadmapDone={roadmapDone} aptitudePassed={aptitudePassed} /><div className="content-card radar-card"><SectionTitle icon={Target} title="Aptitude Breakdown" /><p className="company-card-copy">Scores shown per category — take untested sections to fill gaps</p><div className="radar-wrap"><RadarChart data={radarData} /></div>{untestedCategories.length > 0 && <button className="text-btn" onClick={() => go('aptitude')}>Take {untestedCategories.join(', ')} <ArrowRight size={14} /></button>}</div><ApplicationsCard applications={applications} onStatusChange={handleStatusChange} onOpenOutreach={(c, r) => onOpenOutreach?.(c, r, [])} onOpenJdMatcher={(r, d) => onOpenJdMatcher?.(r, d)} /><JobRightAgent userSkills={resume?.skills || profile?.saved_skills || []} targetRole={profile?.target_role} onOpenOutreach={(job, matchedSkills) => onOpenOutreach?.(job.company, job.title, matchedSkills)} onTrackApplication={async (company, role) => { if (user) { await recordApplication(user.id, company, role, '#', user.email, session?.access_token); loadApplications(); } }} onOpenJdMatcher={onOpenJdMatcher} /><div className="dashboard-grid"><div className="content-card growth-card"><SectionTitle icon={BarChart3} title="Skill growth over time" action={<span className="muted-label">Skills detected per resume analysis</span>} /><SkillGrowthChart points={growthPoints} onActiveChange={setActiveGrowthIndex} /><div className="chart-legend"><span><i className="legend-blue" /> Skills covered</span><strong>{displayedSkillsLabel}</strong></div><div className="tag-cloud growth-skills-list">{displayedSkillNames.length > 0 ? displayedSkillNames.map((name) => <SkillTag green key={name}>{name}</SkillTag>) : <div className="growth-skills-empty"><div className="empty-skills-badge"><Sparkles size={14} /><span>0 skills parsed from this file</span></div><p>Upload or scan an updated technical resume to build your skill momentum.</p></div>}</div></div><div className="content-card milestone-card"><SectionTitle icon={Target} title="Milestones" /><div className="milestone-list">{displayMilestones.map((m) => { const done = isMilestoneDone(m); const statusText = done ? 'Completed' : m.key === 'apply_10' ? `In progress (${Math.min(appliedCount, 10)}/10)` : 'In progress'; return <div className={done ? 'milestone-row completed' : 'milestone-row'} key={m.id}><div className="milestone-dot" /><div><strong>{m.label}</strong><p>{statusText}</p></div></div>; })}</div><div className="milestone-footer"><strong>{completedCount}/{displayMilestones.length} complete</strong><span>Keep building with focus.</span></div></div></div></>;
 }
 
 function SalaryCard({ profile, resume, roadmap, roadmapDone, aptitudePassed }: { profile: Profile | null; resume: ResumeAnalysis | null; roadmap: RoadmapSkill[]; roadmapDone: boolean; aptitudePassed: boolean }) {
@@ -1321,7 +1402,17 @@ async function syncCompanySkillsOnDemand(userId: string, missingSkills: string[]
   if (error) console.error('Failed to sync on-demand company skills:', error.message);
 }
 
-function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; onProgress?: () => void }) {
+function ResumeAnalysisPage({
+  go,
+  onProgress,
+  onOpenJdMatcher,
+  onOpenOutreach,
+}: {
+  go: (module: Module) => void;
+  onProgress?: () => void;
+  onOpenJdMatcher?: () => void;
+  onOpenOutreach?: (company: string, role: string, skills: string[]) => void;
+}) {
   const { user, profile, updateProfile, session } = useAuth();
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<ResumeAnalysis | null>(null);
@@ -1368,10 +1459,24 @@ function ResumeAnalysisPage({ go, onProgress }: { go: (module: Module) => void; 
     return idx === -1 ? 1 : history.length - idx;
   }
 
-  return <><PageHeader eyebrow="MODULE 02 / RESUME INTELLIGENCE" title="Know your starting point."><div className="header-note"><span className="status-dot" /> Demo analysis available</div></PageHeader><div className="module-intro"><p>Upload your resume and get a clear view of your ATS readiness, strongest skills, and the roles that fit you best.</p></div>{!analysis ? <div className="upload-card"><div className="upload-icon"><Upload size={23} /></div><h2>Drop your resume here</h2><p>PDF or DOCX · Maximum 5 MB</p><label className="file-btn">Choose file<input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>{file && <div className="selected-file"><FileText size={16} /><span>{file.name}</span><button onClick={() => setFile(null)}><X size={15} /></button></div>}{error && <div className="form-alert error inline">{error}</div>}<button className="primary-btn analyze-btn" disabled={!file || busy} onClick={analyze}>{busy ? 'Reading your resume…' : 'Analyze resume'}<Sparkles size={17} /></button><small className="privacy-note"><ShieldCheck size={13} /> Your resume stays private to your workspace</small></div> : <ResumeResult analysis={analysis} round={roundOf(analysis.id)} onReset={() => setAnalysis(null)} go={go} />}{history.length > 1 && <div className="history-section"><SectionTitle icon={FileText} title="Past analysis" /><div className="history-list">{history.slice(1, 2).map((item) => <button key={item.id} className="history-row" onClick={() => setAnalysis(item)}><FileText size={17} /><span>{item.file_name}</span><small>{new Date(item.created_at).toLocaleDateString()}</small><strong>{item.ats_score}/100</strong><ChevronRight size={15} /></button>)}</div></div>}</>;
+  return <><PageHeader eyebrow="MODULE 02 / RESUME INTELLIGENCE" title="Know your starting point."><div className="header-note"><span className="status-dot" /> Demo analysis available</div></PageHeader><div className="module-intro"><p>Upload your resume and get a clear view of your ATS readiness, strongest skills, and the roles that fit you best.</p></div>{!analysis ? <div className="upload-card"><div className="upload-icon"><Upload size={23} /></div><h2>Drop your resume here</h2><p>PDF or DOCX · Maximum 5 MB</p><label className="file-btn">Choose file<input type="file" accept=".pdf,.docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} /></label>{file && <div className="selected-file"><FileText size={16} /><span>{file.name}</span><button onClick={() => setFile(null)}><X size={15} /></button></div>}{error && <div className="form-alert error inline">{error}</div>}<button className="primary-btn analyze-btn" disabled={!file || busy} onClick={analyze}>{busy ? 'Reading your resume…' : 'Analyze resume'}<Sparkles size={17} /></button><small className="privacy-note"><ShieldCheck size={13} /> Your resume stays private to your workspace</small></div> : <ResumeResult analysis={analysis} round={roundOf(analysis.id)} onReset={() => setAnalysis(null)} go={go} onOpenJdMatcher={onOpenJdMatcher} onOpenOutreach={onOpenOutreach} />}{history.length > 1 && <div className="history-section"><SectionTitle icon={FileText} title="Past analysis" /><div className="history-list">{history.slice(1, 2).map((item) => <button key={item.id} className="history-row" onClick={() => setAnalysis(item)}><FileText size={17} /><span>{item.file_name}</span><small>{new Date(item.created_at).toLocaleDateString()}</small><strong>{item.ats_score}/100</strong><ChevronRight size={15} /></button>)}</div></div>}</>;
 }
 
-function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalysis; round: number; onReset: () => void; go: (module: Module) => void }) {
+function ResumeResult({
+  analysis,
+  round,
+  onReset,
+  go,
+  onOpenJdMatcher,
+  onOpenOutreach,
+}: {
+  analysis: ResumeAnalysis;
+  round: number;
+  onReset: () => void;
+  go: (module: Module) => void;
+  onOpenJdMatcher?: () => void;
+  onOpenOutreach?: (company: string, role: string, skills: string[]) => void;
+}) {
   const { user, profile, updateProfile, session } = useAuth();
   const [workExperience, setWorkExperience] = useState<WorkExperience[]>([]);
   useEffect(() => {
@@ -1394,6 +1499,10 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
     }
     return getMissingSkills(analysis.skills, targetRole);
   }, [analysis.skills, targetRole, aiRole]);
+
+  const atsBreakdown = useMemo(() => {
+    return calculateAtsScore(analysis.skills, analysis.raw_text || '', targetRole, round).breakdown;
+  }, [analysis.skills, analysis.raw_text, targetRole, round]);
   // Once a target role is set, "roles that fit" should stay in that lane —
   // unfiltered, it ranks across all 40 roles by raw skill overlap, which can
   // surface something like Game Developer for someone targeting Cybersecurity
@@ -1470,11 +1579,20 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
     return <div className="hiring-row" key={rowKey}>
       <div className="hiring-row-top"><strong>{c.company}</strong><TierBadge tier={c.tier} /><span className="matched-role-pct-mini">{c.bestMatch.matchPct}%</span></div>
       <div className="hiring-row-meta"><CompanySalaryBadge company={c.company} role={c.bestMatch.role} location={profile?.city || profile?.state || 'India'} fallback={c.salaryBand} defaultLevel={experienceLevel} experienceYears={experienceYears} /></div>
-      <div className="hiring-row-foot">
+      <div className="hiring-row-foot" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
         {canApply ? <button className={applied ? 'apply-btn applied' : 'apply-btn'} onClick={() => apply(c.company, c.bestMatch.role)}>{applied ? <><Check size={13} /> Applied</> : <>Apply <ArrowRight size={13} /></>}</button> :
           <button type="button" className={expanded ? 'role-skill-missing-btn open' : 'role-skill-missing-btn'} onClick={() => { const next = expanded ? null : rowKey; setExpandedCompany(next); if (next && user) syncCompanySkillsOnDemand(user.id, c.bestMatch.missing); }}>
             Finish {c.bestMatch.missing.length} skill{c.bestMatch.missing.length === 1 ? '' : 's'} <ChevronDown size={11} />
           </button>}
+        <button
+          type="button"
+          className="secondary-btn"
+          style={{ padding: '6px 10px', fontSize: '0.78rem', height: '32px', whiteSpace: 'nowrap' }}
+          onClick={() => onOpenOutreach?.(c.company, c.bestMatch.role, c.bestMatch.have)}
+          title="SocialSonic & Happenstance 1-Click Outreach"
+        >
+          <Send size={12} /> Outreach
+        </button>
       </div>
       {expanded && c.bestMatch.missing.length > 0 && <div className="role-skill-detail nested">
         <div className="tag-cloud">{c.bestMatch.missing.map((skill) => <SkillTag red key={skill}>{skill}</SkillTag>)}</div>
@@ -1514,7 +1632,12 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
         <h2>{analysis.file_name}</h2>
         <p>Your resume has a solid foundation. Here’s where you can focus next.</p>
       </div>
-      <button className="secondary-btn" onClick={onReset}><Plus size={16} /> Analyze another</button>
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <button className="secondary-btn" onClick={onOpenJdMatcher} title="Careerflow.ai Job Description Keyword & XYZ Matcher">
+          <Sparkles size={16} /> Careerflow JD Matcher
+        </button>
+        <button className="secondary-btn" onClick={onReset}><Plus size={16} /> Analyze another</button>
+      </div>
     </div>
 
     <div className="result-grid">
@@ -1543,6 +1666,54 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
           <div className="tag-cloud">{missing.map((m) => <SkillTag key={m.skill} red>{m.skill}</SkillTag>)}</div>
         </>}
         <button className="text-btn" onClick={() => go('roadmap')}>See your skill gaps <ArrowRight size={15} /></button>
+      </div>
+
+      {/* Careerflow.ai ATS Diagnostic Breakdown Card */}
+      <div className="content-card ats-categories-card" style={{ gridColumn: '1 / -1' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Sparkles size={16} className="text-emerald" /> Careerflow.ai 7-Category ATS Scoring Breakdown
+            </h3>
+            <p style={{ margin: '3px 0 0', fontSize: '0.84rem', opacity: 0.8 }}>
+              Evaluated across enterprise ATS screening benchmarks (Sections, Relevance, Metrics, Clarity, Impact, Length, Layout)
+            </p>
+          </div>
+          {onOpenJdMatcher && (
+            <button className="primary-btn" onClick={onOpenJdMatcher} style={{ padding: '8px 14px', fontSize: '0.84rem' }}>
+              <Sparkles size={14} /> Run Target JD Matcher
+            </button>
+          )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
+          {atsBreakdown.categories.map((cat) => {
+            const pct = Math.round((cat.earned / Math.max(1, cat.possible)) * 100);
+            return (
+              <div key={cat.key} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', padding: '12px 14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontWeight: 600, fontSize: '0.88rem' }}>{cat.label}</span>
+                  <span style={{ fontWeight: 700, fontSize: '0.85rem', color: pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#f43f5e' }}>
+                    {cat.earned} / {cat.possible} pts
+                  </span>
+                </div>
+                <div style={{ height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' }}>
+                  <div style={{ height: '100%', width: `${pct}%`, background: pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#f43f5e', borderRadius: '3px', transition: 'width 0.4s ease' }} />
+                </div>
+                <p style={{ margin: 0, fontSize: '0.78rem', opacity: 0.85, lineHeight: 1.35 }}>
+                  {cat.detail}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+
+        {atsBreakdown.warnings.length > 0 && (
+          <div style={{ marginTop: '14px', padding: '10px 12px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.25)', fontSize: '0.82rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertCircle size={15} />
+            <span>{atsBreakdown.warnings[0]}</span>
+          </div>
+        )}
       </div>
     </div>
 
@@ -1601,7 +1772,17 @@ function ResumeResult({ analysis, round, onReset, go }: { analysis: ResumeAnalys
   </>;
 }
 
-function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgress?: () => void }) {
+function RoadmapPage({
+  go,
+  onProgress,
+  verifiedCerts = [],
+  onVerifyCert,
+}: {
+  go: (module: Module) => void;
+  onProgress?: () => void;
+  verifiedCerts?: VerifiedCertificate[];
+  onVerifyCert?: (skill: string) => void;
+}) {
   const { user, profile } = useAuth();
   const [skills, setSkills] = useState<Array<RoadmapSkill & { video?: string }>>([]);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatch[]>([]);
@@ -1841,7 +2022,7 @@ function RoadmapPage({ go, onProgress }: { go: (module: Module) => void; onProgr
     onProgress?.();
   }
 
-  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {role}{aiRole && <span className="ai-badge">AI-matched</span>}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">{aiLoading ? `Looking up skills for "${role}" with AI…` : 'Preparing your personalized roadmap…'}</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong></div><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>)}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}{skills.length > 0 && done === skills.length && <div className="content-card resume-generate-card"><SectionTitle icon={FileText} title="Updated resume" action={<span className="muted-label">{done} of {skills.length} skills covered</span>} /><p className="missing-intro">You've completed every skill on this roadmap — generate a fresh resume with everything you've learned, ready to send out.</p><button type="button" className="primary-btn" onClick={generateResume} disabled={!latestResume}><Download size={16} /> Generate updated resume (PDF)</button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div><div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
+  return <><PageHeader eyebrow="MODULE 03 / SKILL DIRECTION" title="Close the gap with intention."><div className="role-pill"><Target size={15} /> {role}{aiRole && <span className="ai-badge">AI-matched</span>}</div></PageHeader><div className="roadmap-hero"><div><div className="eyebrow light">YOUR ROADMAP</div><h2>{done} of {skills.length || 0} skills covered</h2><p>Progress is not about knowing everything. It’s about knowing what’s next.</p></div><ProgressRing score={skills.length ? Math.round(done / skills.length * 100) : 0} size={124} /></div>{!skills.length ? <div className="empty-state">{aiLoading ? `Looking up skills for "${role}" with AI…` : 'Preparing your personalized roadmap…'}</div> : <div className="roadmap-groups">{(['Must Have', 'Nice to Have', 'Advanced'] as const).map((tier) => { const items = skills.filter((s) => s.priority === tier); if (!items.length) return null; const doneInTier = items.filter((s) => s.done).length; return <div key={tier}><div className="roadmap-tier-head"><span className={`priority ${tier.toLowerCase().replace(' ', '-')}`}>{tier}</span><span className="roadmap-tier-count">({doneInTier}/{items.length})</span></div><div className="roadmap-tier-grid">{items.map((skill) => { const isVerified = verifiedCerts.some((c) => c.skill.toLowerCase() === skill.skill_name.toLowerCase() || c.courseTitle.toLowerCase().includes(skill.skill_name.toLowerCase())); return <div className={skill.done ? 'roadmap-row completed' : 'roadmap-row'} key={skill.id}><button className="check-toggle" onClick={() => toggle(skill)}>{skill.done ? <Check size={15} /> : <Circle size={17} />}</button><div className="roadmap-skill"><strong>{skill.skill_name}</strong>{isVerified && <span className="cert-verified-pill" title="Verified Credential via SWAYAM/Coursera"><ShieldCheck size={12} /> Verified</span>}</div><button type="button" className="verify-course-btn" onClick={() => onVerifyCert?.(skill.skill_name)} title="Explore SWAYAM / Coursera courses and verify certificate"><Award size={13} /> {isVerified ? 'View Proof' : 'Courses & Verify'}</button><a className="watch-link" href={skill.video || `https://www.youtube.com/results?search_query=${encodeURIComponent(skill.skill_name + ' tutorial')}`} target="_blank" rel="noreferrer"><Play size={13} /> Watch</a><button className="mark-btn" onClick={() => toggle(skill)}>{skill.done ? 'Completed' : 'Mark done'}</button></div>; })}</div></div>; })}</div>}{!skills.length && <div className="empty-state"><Target size={28} /><strong>Your roadmap will appear after your first resume analysis.</strong><button className="primary-btn" onClick={() => go('resume')}>Analyze resume <ArrowRight size={16} /></button></div>}{skills.length > 0 && done === skills.length && <div className="content-card resume-generate-card"><SectionTitle icon={FileText} title="Updated resume" action={<span className="muted-label">{done} of {skills.length} skills covered</span>} /><p className="missing-intro">You've completed every skill on this roadmap — generate a fresh resume with everything you've learned, ready to send out.</p><button type="button" className="primary-btn" onClick={generateResume} disabled={!latestResume}><Download size={16} /> Generate updated resume (PDF)</button></div>}<div className="content-card company-card"><SectionTitle icon={BriefcaseBusiness} title="Companies you can target" action={<span className="muted-label">Based on your current skills</span>} /><p className="company-card-copy">Ranked by how much of each company's role you already match — not a generic list.</p>{companyMatches.length ? <div className="company-grid">{companyMatches.slice(0, 12).map((c) => <div className="company-pill" key={c.company}><strong>{c.company}</strong><span>{c.category}</span><small>{c.bestMatch.role} · {c.bestMatch.matchPct}% match</small></div>)}</div> : <div className="empty-state">{(profile?.saved_skills || []).length ? 'No company data loaded yet — add pathpilot_companies.json to server/data/.' : 'Analyze your resume first so we know which skills to match against companies.'}</div>}</div><div className="next-banner"><div className="banner-icon"><GraduationCap size={20} /></div><div><strong>Ready to test your knowledge?</strong><p>Put your skills under a little pressure with a focused aptitude test.</p></div><button onClick={() => go('aptitude')}>Take a test <ArrowRight size={16} /></button></div></>;
 }
 
 const questions = QUESTIONS;

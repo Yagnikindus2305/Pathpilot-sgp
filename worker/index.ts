@@ -912,41 +912,53 @@ async function faceLogin(request: Request, env: Env): Promise<Response> {
   return json({ token: tokenHash });
 }
 
+const SENSITIVE_EDGE_REGEX = /(\/\.git|\/\.env|\/\.svn|\/\.ds_store|\/node_modules|\/package(-lock)?\.json|\/server\/|\/docker|\/\.bolt|\/\.wrangler|\/nginx\.conf)/i;
+
+function applySecurityHeaders(res: Response): Response {
+  const newHeaders = new Headers(res.headers);
+  newHeaders.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  newHeaders.set('X-Content-Type-Options', 'nosniff');
+  newHeaders.set('X-Frame-Options', 'DENY');
+  newHeaders.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  newHeaders.set('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()');
+  newHeaders.set('Cross-Origin-Opener-Policy', 'same-origin');
+  newHeaders.set('Cross-Origin-Resource-Policy', 'same-origin');
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers: newHeaders,
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    // Block Git & sensitive configuration probing at Cloudflare edge
+    if (SENSITIVE_EDGE_REGEX.test(url.pathname)) {
+      return applySecurityHeaders(json({ message: 'Not found' }, 404));
+    }
+
+    let response: Response;
     const deleteMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (deleteMatch && request.method === 'DELETE') {
-      return deleteUser(request, env, deleteMatch[1]);
+      response = await deleteUser(request, env, deleteMatch[1]);
+    } else if (url.pathname === '/api/admin/log-view' && request.method === 'POST') {
+      response = await logUserView(request, env);
+    } else if (url.pathname === '/api/activity/log' && request.method === 'POST') {
+      response = await logActivity(request, env);
+    } else if (url.pathname === '/api/jobs/search' && request.method === 'GET') {
+      response = await searchJobs(request, env);
+    } else if (url.pathname === '/api/roles/infer' && request.method === 'POST') {
+      response = await inferRole(request, env);
+    } else if (url.pathname === '/api/salary/lookup' && request.method === 'POST') {
+      response = await lookupSalary(request, env);
+    } else if (url.pathname === '/api/auth/face-login' && request.method === 'POST') {
+      response = await faceLogin(request, env);
+    } else {
+      response = await env.ASSETS.fetch(request);
     }
 
-    if (url.pathname === '/api/admin/log-view' && request.method === 'POST') {
-      return logUserView(request, env);
-    }
-
-    if (url.pathname === '/api/activity/log' && request.method === 'POST') {
-      return logActivity(request, env);
-    }
-
-    if (url.pathname === '/api/jobs/search' && request.method === 'GET') {
-      return searchJobs(request, env);
-    }
-
-    if (url.pathname === '/api/roles/infer' && request.method === 'POST') {
-      return inferRole(request, env);
-    }
-
-    if (url.pathname === '/api/salary/lookup' && request.method === 'POST') {
-      return lookupSalary(request, env);
-    }
-
-    if (url.pathname === '/api/auth/face-login' && request.method === 'POST') {
-      return faceLogin(request, env);
-    }
-
-    // Everything else (the SPA, its assets, and the /api/data/* routes that
-    // already have client-side fallbacks) is served exactly as before.
-    return env.ASSETS.fetch(request);
+    return applySecurityHeaders(response);
   },
 };

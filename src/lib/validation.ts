@@ -114,3 +114,22 @@ export function isStrongPassword(pw: string): boolean {
 }
 
 export const PASSWORD_HELP_TEXT = 'At least 8 characters, with uppercase, lowercase, a number, and a special character.';
+
+// OTP Security Validation: Must be exactly 6 digits, non-trivial, preventing OTP bypass
+export function isValidOtpFormat(otp: string): boolean {
+  if (!otp) return false;
+  const clean = otp.trim();
+  if (!/^\d{6}$/.test(clean)) return false;
+  if (/^(\d)\1{5}$/.test(clean)) return false;
+  if (clean === '123456' || clean === '654321') return false;
+  return true;
+}
+
+// User Enumeration Defense: Standardized generic authentication feedback messages
+export const AUTH_GENERIC_MESSAGES = {
+  FORGOT_PASSWORD_SENT: 'If an account is associated with this email address, a password reset link has been dispatched.',
+  REGISTRATION_SUCCESS: 'Account created. Please check your inbox to verify your email address.',
+  INVALID_CREDENTIALS: 'The email address or password entered is incorrect.',
+  OTP_SENT: 'A verification code has been dispatched. Please check your registered communication channel.',
+  OTP_FAILED: 'Invalid or expired verification code. Please request a new one.',
+};

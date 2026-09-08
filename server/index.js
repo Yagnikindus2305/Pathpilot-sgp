@@ -4,22 +4,73 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import dataRoutes from './routes/data.js';
 import adminRoutes from './routes/admin.js';
+import jobsRoutes from './routes/jobs.js';
 import { sendAttackAlert } from './alert.js';
+import { containsSqliPattern } from './security/validator.js';
 
 const app = express();
 
-// This API only ever serves static reference JSON (colleges/roles/roadmap/
-// company data) — no HTML is rendered, so a strict default-deny CSP is safe
-// and helmet's other defaults (nosniff, no X-Powered-By, frameguard, HSTS,
-// referrer-policy, etc.) apply cleanly on top of that.
+// Disable X-Powered-By to prevent framework banner grabbing
+app.disable('x-powered-by');
+
+// Enterprise Security Headers: CSP, HSTS, Permissions-Policy, Referrer-Policy, nosniff, DENY frameguard
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'none'"],
       frameAncestors: ["'none'"],
+      baseUri: ["'none'"],
+      formAction: ["'none'"],
     },
   },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+  xContentTypeOptions: true,
+  xFrameOptions: { action: 'deny' },
+  crossOriginOpenerPolicy: { policy: 'same-origin' },
+  crossOriginResourcePolicy: { policy: 'same-origin' },
 }));
+
+// Explicit fallback to ensure standard RFC headers are always emitted
+app.use((_req, res, next) => {
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  res.removeHeader('Server');
+  next();
+});
+
+// Git Repository Exposure & Sensitive File Probe Prevention (OWASP A05)
+const SENSITIVE_PROBE_REGEX = /(\/\.git|\/\.env|\/\.svn|\/\.ds_store|\/node_modules|\/package(-lock)?\.json|\/server\/|\/docker|\/\.bolt|\/\.wrangler|\/nginx\.conf)/i;
+app.use((req, res, next) => {
+  if (SENSITIVE_PROBE_REGEX.test(req.originalUrl)) {
+    const ip = clientIp(req);
+    console.warn(`[SECURITY ALERT] Blocked sensitive file/directory probe from ${ip}: ${req.method} ${req.originalUrl}`);
+    sendAttackAlert({ ip, method: req.method, path: req.originalUrl, reason: 'Sensitive directory or file probe blocked' });
+    return res.status(404).json({ message: 'Not found' });
+  }
+  next();
+});
+
+// SQL Injection & Parameter Length Abuse Guard
+app.use((req, res, next) => {
+  for (const [key, val] of Object.entries(req.query)) {
+    if (typeof val === 'string') {
+      if (val.length > 500) {
+        return res.status(400).json({ message: 'Query parameter exceeds maximum allowable length.' });
+      }
+      if (containsSqliPattern(val)) {
+        const ip = clientIp(req);
+        console.warn(`[SECURITY ALERT] SQLi pattern detected from ${ip} in query parameter "${key}": ${val}`);
+        sendAttackAlert({ ip, method: req.method, path: req.originalUrl, reason: 'SQL injection pattern detected' });
+        return res.status(400).json({ message: 'Invalid query parameter.' });
+      }
+    }
+  }
+  next();
+});
 
 // Restrict to the actual frontend origin(s) instead of the previous
 // wildcard (cors() with no options allows every origin). Set
@@ -71,6 +122,7 @@ app.use(limiter);
 
 app.use('/api/data', dataRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/jobs', jobsRoutes);
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
