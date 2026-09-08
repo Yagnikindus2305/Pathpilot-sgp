@@ -912,6 +912,147 @@ async function faceLogin(request: Request, env: Env): Promise<Response> {
   return json({ token: tokenHash });
 }
 
+type CertProvider = 'SWAYAM / NPTEL' | 'Coursera' | 'Credly' | 'edX' | 'Udemy';
+
+// Real certificate verification -- fetches the provider's own public
+// verification page server-side (dodges the browser's CORS restrictions
+// that a client-side fetch would hit) and checks the actual response,
+// instead of the old client-side approach of just regex-checking that the
+// submitted text *looked like* a valid ID. A format-only check can be
+// passed with any made-up string in the right shape; this can only be
+// passed by a link/ID that genuinely resolves on the provider's real site.
+// NPTEL/edX/Udemy don't expose a way to resolve a bare ID into a page
+// ourselves (no public lookup-by-ID endpoint), so those three require the
+// actual verification link rather than accepting an ID alone -- rejecting
+// a bare ID for those instead of pretending to check it.
+async function verifyCertificate(request: Request, _env: Env): Promise<Response> {
+  let body: { provider?: CertProvider; urlOrId?: string; candidateName?: string; skillName?: string };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ message: 'Invalid request.' }, 400);
+  }
+  const provider = body.provider;
+  const trimmed = (body.urlOrId || '').trim();
+  const candidateName = (body.candidateName || '').trim();
+  const skillName = body.skillName || '';
+  if (!trimmed) return json({ message: 'Please enter a certificate verification URL or ID.' }, 400);
+  if (!provider) return json({ message: 'Unsupported provider.' }, 400);
+
+  // Coursera's verification pages (both "coursera.org/verify/<code>" and
+  // "coursera.org/account/accomplishments/verify/<code>") are a client-side
+  // rendered SPA -- confirmed by directly fetching both a real-looking and a
+  // deliberately made-up code: the server returns byte-identical generic
+  // homepage HTML (same title, same 1781 lines) either way, with no status
+  // difference and no error text, because the actual verify/reject result is
+  // fetched by JS in the browser after load, which a server-side fetch never
+  // executes. There is no honest way to auto-verify a Coursera credential
+  // from here yet -- claiming otherwise is exactly the fake-verification bug
+  // this endpoint exists to fix, so this provider is turned off rather than
+  // given a check that can't actually distinguish real from made-up.
+  if (provider === 'Coursera') {
+    return json({ message: "Coursera's verification page can't be checked automatically yet (it only reveals results through JavaScript in a browser, not to a server-side fetch) -- this provider isn't supported for automatic verification right now." }, 501);
+  }
+
+  let verifyUrl: string | null = null;
+  let notFoundMarkers: string[] = [];
+
+  if (provider === 'Credly') {
+    let badgeId = trimmed;
+    if (trimmed.includes('credly.com/badges/')) badgeId = trimmed.split('badges/')[1]?.split(/[/?]/)[0] || trimmed;
+    if (!badgeId) return json({ message: 'Invalid Credly badge link.' }, 400);
+    verifyUrl = `https://www.credly.com/badges/${badgeId}`;
+    // Credly's real response for a badge that doesn't exist -- confirmed by
+    // fetching a made-up badge ID directly: HTTP 200 with this exact text
+    // baked into the server-rendered HTML (not client-only), so this marker
+    // is a genuine signal, unlike the guessed text this replaced.
+    notFoundMarkers = ['unable to verify badge', 'we are unable to verify the status of this badge'];
+  } else if (provider === 'SWAYAM / NPTEL') {
+    if (!(trimmed.includes('nptel.ac.in') || trimmed.includes('swayam.gov.in'))) {
+      return json({ message: 'NPTEL/SWAYAM roll numbers can\'t be looked up directly -- paste the official e-certificate verification link from nptel.ac.in or swayam.gov.in instead.' }, 400);
+    }
+    verifyUrl = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+    // The public-facing nptel.ac.in/noc/E_Certificate/verify.php page is
+    // itself just a static iframe shell around archive.nptel.ac.in's real
+    // endpoint -- confirmed by fetching it directly, its rollno query
+    // param is never forwarded server-side (only by client-side JS), so a
+    // server-side fetch of the nptel.ac.in URL sees the same empty shell
+    // for every roll number. Rewriting to the real archive endpoint (which
+    // does genuinely respond HTTP 400 "Invalid certificate reference" for
+    // a made-up roll number, confirmed directly) so the check is real.
+    if (verifyUrl.includes('nptel.ac.in') && !verifyUrl.includes('archive.nptel.ac.in')) {
+      const rollnoMatch = verifyUrl.match(/[?&]rollno=([^&]+)/i);
+      if (rollnoMatch) verifyUrl = `https://archive.nptel.ac.in/noc/E_Certificate/verify.php?rollno=${rollnoMatch[1]}`;
+    }
+    notFoundMarkers = ['invalid certificate reference', 'no record found', 'invalid roll'];
+  } else if (provider === 'edX') {
+    if (!trimmed.includes('edx.org')) return json({ message: 'Paste the official edX credential link (credentials.edx.org/credentials/...).' }, 400);
+    verifyUrl = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+    // edX genuinely returns HTTP 404 for a made-up credential UUID
+    // (confirmed directly), so the status-code check below is the real
+    // signal here; these markers are just a defensive extra layer.
+    notFoundMarkers = ['not found', 'does not exist', 'invalid credential'];
+  } else if (provider === 'Udemy') {
+    // Unlike edX, Udemy's own bot protection returns HTTP 403 for every
+    // certificate fetch from this Worker's IPs -- confirmed directly by
+    // fetching both a made-up ID and a differently-shaped made-up ID and
+    // getting the identical 403 either way, meaning it's blocking the
+    // request itself, not reporting on the certificate. A blanket block
+    // like that can't distinguish a real certificate from a fake one, so
+    // (same reasoning as Coursera above) this is turned off honestly
+    // rather than left silently rejecting every real Udemy certificate too.
+    return json({ message: "Udemy blocks automated certificate checks from here (its bot protection returns the same result for every link), so this provider isn't supported for automatic verification right now." }, 501);
+  } else {
+    return json({ message: 'Unsupported provider.' }, 400);
+  }
+
+  if (!verifyUrl) return json({ message: `Invalid ${provider} credential format.` }, 400);
+
+  let pageText = '';
+  try {
+    const res = await fetch(verifyUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PathPilotCertVerifier/1.0; +https://pathpilot-sgp.yagnikchandira-23-cse.workers.dev)' },
+      redirect: 'follow',
+    });
+    if (!res.ok) {
+      return json({ message: `${provider} did not return a valid certificate page for this link (HTTP ${res.status}). Double-check the URL/ID.` }, 422);
+    }
+    pageText = (await res.text()).toLowerCase();
+  } catch {
+    return json({ message: `Could not reach ${provider}'s verification page right now. Try again shortly.` }, 502);
+  }
+
+  if (notFoundMarkers.some((m) => pageText.includes(m))) {
+    return json({ message: `${provider} reports no certificate found for this link/ID.` }, 422);
+  }
+
+  // Best-effort only -- name formatting varies too much (middle names,
+  // initials, page markup) to treat a miss as proof the certificate isn't
+  // real, so this doesn't gate success. It's surfaced to the user so they
+  // can visually double-check it's genuinely theirs.
+  const nameMatched = candidateName.length > 1 && pageText.includes(candidateName.toLowerCase());
+
+  return json({
+    success: true,
+    message: nameMatched
+      ? `Confirmed live on ${provider}'s own site, and the recipient name matched.`
+      : `Confirmed live on ${provider}'s own site. Could not independently confirm the recipient name on the page -- double-check it's really yours.`,
+    certificate: {
+      id: `cert-${Date.now()}`,
+      skillName,
+      provider,
+      certificateId: trimmed,
+      verificationUrl: verifyUrl,
+      candidateName,
+      courseTitle: `${skillName} Verified Certificate`,
+      issueDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      verifiedAt: new Date().toISOString(),
+      status: 'verified',
+      nameMatched,
+    },
+  });
+}
+
 const SENSITIVE_EDGE_REGEX = /(\/\.git|\/\.env|\/\.svn|\/\.ds_store|\/node_modules|\/package(-lock)?\.json|\/server\/|\/docker|\/\.bolt|\/\.wrangler|\/nginx\.conf)/i;
 
 function applySecurityHeaders(res: Response): Response {
@@ -955,6 +1096,8 @@ export default {
       response = await lookupSalary(request, env);
     } else if (url.pathname === '/api/auth/face-login' && request.method === 'POST') {
       response = await faceLogin(request, env);
+    } else if (url.pathname === '/api/certificates/verify' && request.method === 'POST') {
+      response = await verifyCertificate(request, env);
     } else {
       response = await env.ASSETS.fetch(request);
     }

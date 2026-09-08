@@ -24,6 +24,7 @@ export interface VerifiedCertificate {
   issueDate: string;
   verifiedAt: string;
   status: 'verified' | 'rejected' | 'pending';
+  nameMatched?: boolean;
 }
 
 // Curated verified course offerings mapped to top roadmap skills
@@ -236,144 +237,33 @@ export function getRecommendedCoursesForSkill(skillName: string): RecommendedCou
   ];
 }
 
-// Verification engine: validates authentic certificate links & rolls
-export function verifyCertificateSubmission(params: {
+// Real verification: hits the Worker's /api/certificates/verify, which
+// fetches the provider's own public verification page server-side and
+// confirms the certificate genuinely resolves there -- not a client-side
+// regex check of whether the submitted text merely looks like a valid ID.
+export async function verifyCertificateSubmission(params: {
   provider: 'SWAYAM / NPTEL' | 'Coursera' | 'Credly' | 'edX' | 'Udemy';
   urlOrId: string;
   candidateName: string;
   skillName: string;
-}): {
+}): Promise<{
   success: boolean;
   message: string;
   certificate?: VerifiedCertificate;
-} {
-  const { provider, urlOrId, candidateName, skillName } = params;
-  const trimmed = urlOrId.trim();
-
-  if (!trimmed) {
-    return { success: false, message: 'Please enter a certificate verification URL or roll number.' };
-  }
-
-  // 1. Coursera Verification Check
-  if (provider === 'Coursera') {
-    // Official pattern: coursera.org/verify/<VERIFICATION_CODE> or 10-14 alphanumeric code
-    const isUrl = trimmed.includes('coursera.org/verify/') || trimmed.includes('coursera.org/user/');
-    const isCode = /^[A-Z0-9]{10,16}$/i.test(trimmed);
-
-    if (!isUrl && !isCode) {
-      return {
-        success: false,
-        message: 'Invalid Coursera credential. Must be an official link like "coursera.org/verify/XXXXX" or a 12-digit Coursera verification code.',
-      };
+}> {
+  try {
+    const res = await fetch('/api/certificates/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      return { success: false, message: data.message || 'Could not verify this certificate.' };
     }
-
-    const code = isUrl ? trimmed.split('verify/')[1]?.split('?')[0] || trimmed.slice(-12) : trimmed;
-
-    return {
-      success: true,
-      message: `Verified successfully! Official Coursera digital credential ledger matched for ${candidateName}.`,
-      certificate: {
-        id: `cert-${Date.now()}`,
-        skillName,
-        provider: 'Coursera',
-        certificateId: code.toUpperCase(),
-        verificationUrl: isUrl ? trimmed : `https://www.coursera.org/verify/${code.toUpperCase()}`,
-        candidateName,
-        courseTitle: `${skillName} Professional Specialization`,
-        issueDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        verifiedAt: new Date().toISOString(),
-        status: 'verified',
-      },
-    };
+    return { success: true, message: data.message, certificate: data.certificate as VerifiedCertificate };
+  } catch {
+    return { success: false, message: 'Could not reach the verification service. Check your connection and try again.' };
   }
-
-  // 2. SWAYAM / NPTEL Verification Check
-  if (provider === 'SWAYAM / NPTEL') {
-    // Official pattern: NPTEL roll number e.g. NPTEL24CS78S14560982 or nptel.ac.in verification link
-    const isNptelRoll = /^NPTEL\d{2}[A-Z]{2,4}\d+/i.test(trimmed);
-    const isNptelUrl = trimmed.includes('nptel.ac.in') || trimmed.includes('swayam.gov.in');
-
-    if (!isNptelRoll && !isNptelUrl) {
-      return {
-        success: false,
-        message: 'Invalid NPTEL credential. Must be an official NPTEL Roll Number (e.g. NPTEL24CS78S...) or official e-certificate verification link.',
-      };
-    }
-
-    const rollNo = isNptelRoll ? trimmed.toUpperCase() : 'NPTEL24CS91S824901';
-
-    return {
-      success: true,
-      message: `Verified! NPTEL / SWAYAM National Digital Registry validated. 3 Academic University Credits confirmed for ${candidateName}.`,
-      certificate: {
-        id: `cert-${Date.now()}`,
-        skillName,
-        provider: 'SWAYAM / NPTEL',
-        certificateId: rollNo,
-        verificationUrl: isNptelUrl ? trimmed : `https://nptel.ac.in/noc/E_Certificate/verify.php?rollno=${rollNo}`,
-        candidateName,
-        courseTitle: `${skillName} & Cyber Applications (IIT Mentored)`,
-        issueDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        verifiedAt: new Date().toISOString(),
-        status: 'verified',
-      },
-    };
-  }
-
-  // 3. Credly (Cisco / AWS / CompTIA)
-  if (provider === 'Credly') {
-    const isCredly = trimmed.includes('credly.com/badges/') || /^[0-9a-f-]{30,40}$/i.test(trimmed);
-    if (!isCredly) {
-      return {
-        success: false,
-        message: 'Invalid Credly badge URL. Must be an official link like "https://www.credly.com/badges/your-badge-id".',
-      };
-    }
-
-    return {
-      success: true,
-      message: `Verified! Credly enterprise digital badge verified with cryptographically signed metadata for ${candidateName}.`,
-      certificate: {
-        id: `cert-${Date.now()}`,
-        skillName,
-        provider: 'Credly',
-        certificateId: trimmed.split('badges/')[1]?.slice(0, 16) || 'CRD-829148',
-        verificationUrl: trimmed.startsWith('http') ? trimmed : `https://www.credly.com/badges/${trimmed}`,
-        candidateName,
-        courseTitle: `${skillName} Industry Certified Badge`,
-        issueDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        verifiedAt: new Date().toISOString(),
-        status: 'verified',
-      },
-    };
-  }
-
-  // 4. edX or Udemy
-  if (provider === 'edX' || provider === 'Udemy') {
-    if (!trimmed.includes(provider.toLowerCase())) {
-      return {
-        success: false,
-        message: `Invalid ${provider} certificate link. Must be a valid certificate link from ${provider}.`,
-      };
-    }
-
-    return {
-      success: true,
-      message: `Verified! ${provider} online certificate ledger verified for ${candidateName}.`,
-      certificate: {
-        id: `cert-${Date.now()}`,
-        skillName,
-        provider,
-        certificateId: trimmed.split('/').filter(Boolean).pop() || `${provider}-123`,
-        verificationUrl: trimmed,
-        candidateName,
-        courseTitle: `${skillName} Mastery Course`,
-        issueDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-        verifiedAt: new Date().toISOString(),
-        status: 'verified',
-      },
-    };
-  }
-
-  return { success: false, message: 'Unsupported provider selected.' };
 }
+

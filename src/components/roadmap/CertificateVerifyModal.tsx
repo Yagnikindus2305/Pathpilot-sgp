@@ -43,27 +43,25 @@ export function CertificateVerifyModal({
 
   const courses: RecommendedCourse[] = getRecommendedCoursesForSkill(skillName);
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     setErrorMsg('');
     setVerifying(true);
 
-    setTimeout(() => {
-      const res = verifyCertificateSubmission({
-        provider,
-        urlOrId,
-        candidateName: candidateName || 'Candidate',
-        skillName,
-      });
+    const res = await verifyCertificateSubmission({
+      provider,
+      urlOrId,
+      candidateName: candidateName || 'Candidate',
+      skillName,
+    });
 
-      setVerifying(false);
+    setVerifying(false);
 
-      if (res.success && res.certificate) {
-        setSuccessCert(res.certificate);
-        onCertificateVerified(res.certificate);
-      } else {
-        setErrorMsg(res.message);
-      }
-    }, 800);
+    if (res.success && res.certificate) {
+      setSuccessCert(res.certificate);
+      onCertificateVerified(res.certificate);
+    } else {
+      setErrorMsg(res.message);
+    }
   };
 
   return (
@@ -157,6 +155,13 @@ export function CertificateVerifyModal({
               </div>
             </div>
 
+            {!successCert.nameMatched && (
+              <div className="cert-error-alert" style={{ background: '#fff7e6', color: '#8a5a00', borderColor: '#f5c96b' }}>
+                <AlertCircle size={15} />
+                <span>The link was confirmed live on {successCert.provider}'s own site, but the recipient name couldn't be automatically matched from the page -- double-check this certificate is really yours.</span>
+              </div>
+            )}
+
             <div className="cert-success-actions">
               <button className="primary-btn" onClick={onClose}>
                 <span>Done &amp; Update Roadmap Milestone</span>
@@ -182,28 +187,26 @@ export function CertificateVerifyModal({
                   }}
                 >
                   <option value="SWAYAM / NPTEL">SWAYAM / NPTEL (IITs &amp; IISc)</option>
-                  <option value="Coursera">Coursera (Official Verification URL)</option>
                   <option value="Credly">Credly (Cisco / AWS / CompTIA)</option>
                   <option value="edX">edX (Verified Certificate)</option>
-                  <option value="Udemy">Udemy (Certificate ID)</option>
                 </select>
               </div>
 
               <div className="cert-field">
                 <label>
                   {provider === 'SWAYAM / NPTEL'
-                    ? 'NPTEL Roll Number or Verification URL'
-                    : provider === 'Coursera'
-                    ? 'Coursera Verification URL or Code'
-                    : 'Certificate URL or Credly Badge Link'}
+                    ? 'NPTEL/SWAYAM Official Verification URL'
+                    : provider === 'edX'
+                    ? 'edX Credential URL'
+                    : 'Credly Badge Link'}
                 </label>
                 <input
                   type="text"
                   placeholder={
                     provider === 'SWAYAM / NPTEL'
-                      ? 'e.g. NPTEL24CS78S14560982 or nptel.ac.in verification URL...'
-                      : provider === 'Coursera'
-                      ? 'e.g. https://www.coursera.org/verify/AB89XZ1234...'
+                      ? 'e.g. https://nptel.ac.in/noc/E_Certificate/verify.php?rollno=...'
+                      : provider === 'edX'
+                      ? 'e.g. https://credentials.edx.org/credentials/...'
                       : 'e.g. https://www.credly.com/badges/your-badge-id...'
                   }
                   value={urlOrId}
