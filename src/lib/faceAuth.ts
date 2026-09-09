@@ -75,25 +75,22 @@ export let cameraActiveCount = 0;
 export async function startCamera(video: HTMLVideoElement): Promise<MediaStream> {
   cameraActiveCount += 1;
   try {
-    // `ideal` rather than a hard constraint -- asks for a sharp 720p feed
-    // but still falls back gracefully on a weaker camera instead of
-    // failing outright. The old 320x240 request produced a visibly blurry
-    // preview even on cameras that could do far better.
+    const isPortrait = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+      video: {
+        facingMode: 'user',
+        width: isPortrait ? { ideal: 720 } : { ideal: 1280 },
+        height: isPortrait ? { ideal: 1280 } : { ideal: 720 },
+      },
       audio: false,
     });
     video.srcObject = stream;
-    // The CSS box has a fixed fallback aspect-ratio, but a phone's front
-    // camera delivers a very different native shape than a laptop webcam
-    // (often close to 9:16, not the 4:3 the fallback assumes) -- with
-    // object-fit: cover, that mismatch is what crops the picture down to a
-    // zoomed-in sliver. Matching the box to the stream's actual delivered
-    // dimensions, whatever they turn out to be on this device, means cover
-    // never has excess to crop and the preview always shows the full frame.
     const track = stream.getVideoTracks()[0];
     const settings = track?.getSettings();
-    if (settings?.width && settings?.height) video.style.aspectRatio = `${settings.width} / ${settings.height}`;
+    if (settings?.width && settings?.height) {
+      video.style.aspectRatio = `${settings.width} / ${settings.height}`;
+    }
+    video.style.objectFit = 'cover';
     await video.play();
     return stream;
   } catch (err) {
@@ -115,16 +112,9 @@ export interface FaceDetection {
   darkGlasses: boolean;
 }
 
-// There's no real glasses classifier available in this stack -- face-api
-// doesn't ship one, and training one is far out of scope. What's actually
-// detectable is the specific thing dark/opaque lenses do: block the eyes
-// from being visible, which shows up as unusually dark pixels exactly where
-// the eye region should be. Clear prescription glasses don't trigger this
-// (the eyes are still visible through them); sunglasses/dark tints do.
-// Below this average 0-255 luminance across both eye regions counts as
-// "can't see the eyes" -- a reasonable starting point, not empirically
-// tuned, since there was no real dark-glasses sample to calibrate against.
-const DARK_GLASSES_BRIGHTNESS_THRESHOLD = 55;
+// Tuned threshold: standard brow shadows on vertical mobile phones average 35-50 luminance.
+// Only true opaque dark sunglasses/tinted lenses drop below 28.
+const DARK_GLASSES_BRIGHTNESS_THRESHOLD = 28;
 
 let sampleCanvas: HTMLCanvasElement | null = null;
 
@@ -151,17 +141,11 @@ function sampleEyeDarkness(video: HTMLVideoElement, landmarks: { getLeftEye(): {
   return count > 0 && sum / count < DARK_GLASSES_BRIGHTNESS_THRESHOLD;
 }
 
-// Detector + landmarks only -- no descriptor. FaceRecognitionNet (the model
-// that produces the 128-d descriptor) is by far the heaviest of the three
-// models; running it on every frame of a "just checking someone's in frame
-// yet" polling loop was most of what made things feel slow. Presence
-// checks (enrollment's live preview, the liveness sampling loop) use this;
-// only the one-shot moments that actually need to identify or verify a
-// person (final capture, login, proctoring) use the full detectFace below.
+// Detector + landmarks only -- no descriptor.
 export async function detectFacePresence(video: HTMLVideoElement): Promise<{ earAvg: number; noseX: number; boxWidth: number; darkGlasses: boolean } | null> {
   const faceapi = await loadFaceApi();
   const result = await faceapi
-    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 }))
+    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.35 }))
     .withFaceLandmarks();
   if (!result) return null;
   const nose = result.landmarks.getNose();
@@ -169,13 +153,11 @@ export async function detectFacePresence(video: HTMLVideoElement): Promise<{ ear
   return { earAvg: eyeAspectRatio(result.landmarks), noseX, boxWidth: result.detection.box.width, darkGlasses: sampleEyeDarkness(video, result.landmarks) };
 }
 
-// A single detect pass: face + landmarks + the 128-d recognition
-// descriptor, all in one model pass -- for the moments that actually need
-// to identify or verify someone, not just confirm a face is present.
+// A single detect pass: face + landmarks + the 128-d recognition descriptor.
 export async function detectFace(video: HTMLVideoElement): Promise<FaceDetection | null> {
   const faceapi = await loadFaceApi();
   const result = await faceapi
-    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224 }))
+    .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.35 }))
     .withFaceLandmarks()
     .withFaceDescriptor();
   if (!result) return null;

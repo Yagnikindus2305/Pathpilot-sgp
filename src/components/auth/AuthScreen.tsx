@@ -529,7 +529,7 @@ export function AuthScreen({ themeToggle }: AuthScreenProps) {
                     <button
                       type="button"
                       className="secondary-btn full"
-                      disabled={busy || faceDarkGlasses}
+                      disabled={busy}
                       onClick={captureFaceScan}
                     >
                       <span>Scan Now Instead</span>

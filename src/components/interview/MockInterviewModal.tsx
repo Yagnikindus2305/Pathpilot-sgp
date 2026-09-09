@@ -250,6 +250,7 @@ export function MockInterviewModal({
             )}
 
             <textarea
+              id="interview-answer-input"
               className="interview-textarea"
               placeholder="Type your spoken or written response directly. E.g., 'In my previous project, when our SIEM triggered... I was responsible for... So I executed the following containment steps... and the final result was...'"
               value={answerText}
@@ -257,7 +258,18 @@ export function MockInterviewModal({
               onPaste={blockPaste}
               onDrop={blockPaste}
               onKeyDown={handleKeyDown}
-              rows={7}
+              onFocus={(e) => {
+                setTimeout(() => {
+                  try {
+                    e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  } catch {}
+                }, 280);
+              }}
+              autoCapitalize="sentences"
+              autoComplete="off"
+              autoCorrect="on"
+              spellCheck={true}
+              rows={5}
             />
 
             <div className="interview-action-buttons">

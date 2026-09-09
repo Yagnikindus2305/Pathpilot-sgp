@@ -14,6 +14,7 @@ import { CertificateVerifyModal } from '@/components/roadmap/CertificateVerifyMo
 import { KanbanBoard } from '@/components/applications/KanbanBoard';
 import { MockInterviewModal } from '@/components/interview/MockInterviewModal';
 import { PublicPortfolioModal } from '@/components/portfolio/PublicPortfolioModal';
+import { MobileBottomDock } from '@/components/common/MobileBottomDock';
 import { type VerifiedCertificate } from '@/lib/courses';
 import { type JobOpening } from '@/lib/jobright';
 import yagnikPhoto from '@/assets/founders/yagnik-chandira.jpeg';
@@ -601,12 +602,59 @@ function Workspace() {
   return <div className="app-shell">
     <aside className={mobileNav ? 'sidebar open' : 'sidebar'}>
       <BrandLogo />
+      
+      {/* AI Fast-Track Quick Launch Tiles in Drawer */}
+      <div className="sidebar-label">AI FAST-TRACK</div>
+      <div className="sidebar-quick-actions">
+        <button
+          type="button"
+          className="sidebar-action-tile interview-tile"
+          onClick={() => {
+            setMockInterviewOpen(true);
+            setMobileNav(false);
+          }}
+          title="AI Technical Mock Interview"
+        >
+          <div className="tile-icon"><Zap size={16} /></div>
+          <div>
+            <strong>AI Mock Interview</strong>
+            <small>STAR method evaluation</small>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          className="sidebar-action-tile portfolio-tile"
+          onClick={() => {
+            setPublicPortfolioOpen(true);
+            setMobileNav(false);
+          }}
+          title="Executive Portfolio & PDF Report"
+        >
+          <div className="tile-icon"><ShieldCheck size={16} /></div>
+          <div>
+            <strong>Executive Portfolio</strong>
+            <small>1-Click PDF &amp; link report</small>
+          </div>
+        </button>
+      </div>
+
       <div className="sidebar-label">YOUR WORKSPACE</div>
       <nav>{navItems.filter((item) => isAdmin ? item.id === 'admin' : item.id !== 'admin').map((item) => { const Icon = item.icon; const access = canAccess(item.id, progression); return <button key={item.id} className={active === item.id ? 'nav-item active' : 'nav-item'} onClick={() => { guardedNavigate(item.id); setMobileNav(false); }}><Icon size={18} /><span>{item.label}</span>{!access.allowed ? <Lock size={13} className="nav-lock" /> : active === item.id && <ChevronRight size={15} className="nav-arrow" />}</button>; })}</nav>
       <div className="sidebar-bottom"><div className="tip-card"><div className="tip-icon"><Zap size={16} /></div><strong>Small steps, big shifts.</strong><p>Consistency beats intensity every time.</p></div><button className="profile-mini" onClick={() => setProfileOpen(true)}><span className="avatar">{displayName.charAt(0).toUpperCase()}</span><span className="profile-mini-text"><strong>{displayName}</strong><small>{profile?.target_role || 'Set your target role'}</small></span><Pencil size={14} /></button><ThemeToggle className="sidebar-theme-toggle" /><button className="signout" onClick={signOut}><LogOut size={15} /> Sign out</button></div>
     </aside>
     {mobileNav && <button className="nav-overlay" onClick={() => setMobileNav(false)} aria-label="Close menu" />}
-    <main className="main-content"><header className="topbar"><button className="menu-btn" onClick={() => setMobileNav(true)}><Menu size={21} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{navItems.find((x) => x.id === active)?.label || 'Dashboard'}</strong></div><div className="topbar-actions"><button type="button" className="topbar-action-pill" onClick={() => setMockInterviewOpen(true)} title="AI Mock Interview Practice"><Zap size={14} /> AI Interview</button><button type="button" className="topbar-action-pill highlight" onClick={() => setPublicPortfolioOpen(true)} title="Executive Portfolio & 1-Click PDF Report"><ShieldCheck size={14} /> Portfolio (PDF)</button><span className="status-pill"><span className="status-dot" /> Workspace active</span><button className="top-avatar" onClick={() => setProfileOpen(true)}>{displayName.charAt(0).toUpperCase()}</button><button className="topbar-icon-btn" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button><button className="topbar-icon-btn" onClick={signOut} title="Sign out"><LogOut size={16} /></button></div></header>{!isAdmin && <ModuleStepper active={active} progression={progression} go={guardedNavigate} />}<div className="page-wrap">{gateMsg && <div className="gate-banner"><Lock size={16} /> <span>{gateMsg}</span><button onClick={() => setGateMsg('')}><X size={15} /></button></div>}{active === 'dashboard' && <Dashboard go={guardedNavigate} onOpenOutreach={handleOpenOutreach} onOpenJdMatcher={handleOpenJdMatcher} onOpenMockInterview={() => setMockInterviewOpen(true)} onOpenPortfolio={() => setPublicPortfolioOpen(true)} verifiedCerts={verifiedCerts} />}{active === 'resume' && <ResumeAnalysisPage go={guardedNavigate} onProgress={refreshProgress} onOpenJdMatcher={() => handleOpenJdMatcher()} onOpenOutreach={handleOpenOutreach} />}{active === 'roadmap' && <RoadmapPage go={guardedNavigate} onProgress={refreshProgress} verifiedCerts={verifiedCerts} onVerifyCert={(skill) => setCertModalConfig({ isOpen: true, skillName: skill })} />}{active === 'aptitude' && <AptitudePage go={guardedNavigate} onProgress={refreshProgress} />}{active === 'compare' && <ComparePage roadmap={roadmap} onProgress={refreshProgress} go={guardedNavigate} />}{active === 'profile' && <ProfilePage go={guardedNavigate} progression={progression} />}{active === 'admin' && <AdminPage />}</div>{!isAdmin && <WorkspaceFooter progression={progression} go={guardedNavigate} />}</main>
+    <main className="main-content"><header className="topbar"><button className="menu-btn" onClick={() => setMobileNav(true)} aria-label="Open navigation menu"><Menu size={21} /></button><div className="breadcrumb"><span>Workspace</span><ChevronRight size={14} /><strong>{navItems.find((x) => x.id === active)?.label || 'Dashboard'}</strong></div><div className="topbar-actions"><button type="button" className="topbar-action-pill desktop-action-pill" onClick={() => setMockInterviewOpen(true)} title="AI Mock Interview Practice"><Zap size={14} /> AI Interview</button><button type="button" className="topbar-action-pill highlight desktop-action-pill" onClick={() => setPublicPortfolioOpen(true)} title="Executive Portfolio & 1-Click PDF Report"><ShieldCheck size={14} /> Portfolio (PDF)</button><span className="status-pill desktop-action-pill"><span className="status-dot" /> Workspace active</span><button className="top-avatar" onClick={() => setProfileOpen(true)} title="View profile">{displayName.charAt(0).toUpperCase()}</button><button className="topbar-icon-btn" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>{theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}</button><button className="topbar-icon-btn" onClick={signOut} title="Sign out"><LogOut size={16} /></button></div></header>{!isAdmin && <ModuleStepper active={active} progression={progression} go={guardedNavigate} />}<div className="page-wrap">{gateMsg && <div className="gate-banner"><Lock size={16} /> <span>{gateMsg}</span><button onClick={() => setGateMsg('')}><X size={15} /></button></div>}{active === 'dashboard' && <Dashboard go={guardedNavigate} onOpenOutreach={handleOpenOutreach} onOpenJdMatcher={handleOpenJdMatcher} onOpenMockInterview={() => setMockInterviewOpen(true)} onOpenPortfolio={() => setPublicPortfolioOpen(true)} verifiedCerts={verifiedCerts} />}{active === 'resume' && <ResumeAnalysisPage go={guardedNavigate} onProgress={refreshProgress} onOpenJdMatcher={() => handleOpenJdMatcher()} onOpenOutreach={handleOpenOutreach} />}{active === 'roadmap' && <RoadmapPage go={guardedNavigate} onProgress={refreshProgress} verifiedCerts={verifiedCerts} onVerifyCert={(skill) => setCertModalConfig({ isOpen: true, skillName: skill })} />}{active === 'aptitude' && <AptitudePage go={guardedNavigate} onProgress={refreshProgress} />}{active === 'compare' && <ComparePage roadmap={roadmap} onProgress={refreshProgress} go={guardedNavigate} />}{active === 'profile' && <ProfilePage go={guardedNavigate} progression={progression} />}{active === 'admin' && <AdminPage />}</div>{!isAdmin && <WorkspaceFooter progression={progression} go={guardedNavigate} />}</main>
+    {!isAdmin && (
+      <MobileBottomDock
+        activeTab={active}
+        onNavigate={guardedNavigate}
+        onOpenMockInterview={() => setMockInterviewOpen(true)}
+        onOpenPortfolio={() => setPublicPortfolioOpen(true)}
+        onOpenProfile={() => setProfileOpen(true)}
+        onSignOut={signOut}
+      />
+    )}
     {profileOpen && <ProfileModal profile={profile} onClose={() => setProfileOpen(false)} updateProfile={updateProfile} />}
     {jdMatcherConfig.isOpen && (
       <JdMatcherModal
